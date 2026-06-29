@@ -89,6 +89,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
     }
   } | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  const [clearingCache, setClearingCache] = useState(false);
 
   useEffect(() => {
     const now = new Date();
@@ -99,6 +100,30 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
     setHour(String(now.getHours()).padStart(2, '0'));
     setMinute(String(now.getMinutes()).padStart(2, '0'));
   }, []);
+
+  const handleClearCache = async () => {
+    setClearingCache(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/nre/cache/clear', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        setDebugInfo(null);
+        setHasSearched(false);
+        setServices([]);
+        setError('');
+      } else {
+        throw new Error('Failed to clear cache');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Failed to clear cache.');
+    } finally {
+      setClearingCache(false);
+    }
+  };
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -364,6 +389,15 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                           Cached items from {debugInfo.cacheStats.cachedTimeRange.start} to {debugInfo.cacheStats.cachedTimeRange.end}.
                         </div>
                       )}
+                    </div>
+                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+                      <button
+                        onClick={handleClearCache}
+                        disabled={clearingCache}
+                        className="px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-sm font-medium hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {clearingCache ? 'Clearing...' : 'Clear Cache'}
+                      </button>
                     </div>
                   </div>
                 )}

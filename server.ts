@@ -603,7 +603,7 @@ async function startServer() {
           platform: s.platform || '-',
           operator: s.operator || '',
           destination,
-          headcode: s.rsid ? s.rsid.substring(0, 4) : (s.trainid || 'N/A'),
+          headcode: s.trainid || (s.rsid ? s.rsid.substring(0, 4) : 'N/A'),
           raw: s
         };
       });
@@ -636,6 +636,15 @@ async function startServer() {
       console.error('Error fetching NRE departures:', error);
       res.status(500).json({ error: 'Failed to fetch departures from NRE API: ' + error.message });
     }
+  });
+
+  // NRE API: Clear Cache
+  app.post('/api/nre/cache/clear', authenticateToken, (req: any, res) => {
+    if (req.user.role !== 'admin' && req.user.role !== 'moderator') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    stationCache.clear();
+    res.json({ message: 'Cache cleared successfully' });
   });
 
   // --- Vite / Static Files ---
