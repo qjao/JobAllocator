@@ -527,12 +527,20 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                                 {alloc.jobNumber}
                               </a>
                               
+                              {!showOnlyMine && alloc.instructorId !== user.id && (
+                                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium truncate ml-auto shrink-0 transition-colors">
+                                  {alloc.instructorName}
+                                </span>
+                              )}
+                            </div>
+                            
+                            <div className="flex flex-col gap-1 overflow-hidden min-w-0">
                               {alloc.isFullJob ? (
-                                <span className="flex items-center gap-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-100/50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded shrink-0 transition-colors">
+                                <span className="flex w-fit items-center gap-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-100/50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded shrink-0 transition-colors">
                                   <CheckCircle2 className="w-3 h-3" /> Full Job
                                 </span>
                               ) : (
-                                <div className="flex flex-wrap gap-1 items-center overflow-hidden min-w-0">
+                                <div className="flex flex-wrap gap-1 items-center min-w-0">
                                   {alloc.headcodes.map(hc => (
                                     <a
                                       key={hc}
@@ -540,18 +548,12 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       onClick={(e) => e.stopPropagation()}
-                                      className="text-[11px] font-mono text-slate-600 dark:text-slate-400 bg-slate-200/50 dark:bg-slate-700/50 px-1.5 py-0.5 rounded truncate min-w-0 transition-colors hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:underline"
+                                      className="text-[11px] font-mono text-slate-600 dark:text-slate-400 bg-slate-200/50 dark:bg-slate-700/50 px-1.5 py-0.5 rounded truncate transition-colors hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:underline"
                                     >
                                       {hc}
                                     </a>
                                   ))}
                                 </div>
-                              )}
-
-                              {!showOnlyMine && alloc.instructorId !== user.id && (
-                                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium truncate ml-auto shrink-0 transition-colors">
-                                  {alloc.instructorName}
-                                </span>
                               )}
                             </div>
 
