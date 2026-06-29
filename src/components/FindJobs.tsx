@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { CalendarIcon, LogOut, Search, Train, Shield, User as UserIcon, HelpCircle, Sun, Moon, AlertTriangle, ChevronRight, Navigation, Copy } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { CalendarIcon, LogOut, Search, Train, Shield, User as UserIcon, HelpCircle, Sun, Moon, AlertTriangle, ChevronRight, Navigation, Copy, BarChart3 } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { User } from '../types';
 import HelpModal from './HelpModal';
 
@@ -95,6 +96,10 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
   const [showDebug, setShowDebug] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
 
+  const [apiStats, setApiStats] = useState<any>(null);
+  const [graphView, setGraphView] = useState<'24h' | '30d'>('30d');
+  const [graphUserFilter, setGraphUserFilter] = useState<string>('all');
+
   useEffect(() => {
     const now = new Date();
     const yyyy = now.getFullYear();
@@ -103,7 +108,26 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
     setDate(`${yyyy}-${mm}-${dd}`);
     setHour(String(now.getHours()).padStart(2, '0'));
     setMinute(String(now.getMinutes()).padStart(2, '0'));
-  }, []);
+    
+    if (user.role === 'admin' || user.role === 'moderator') {
+      fetchApiStats();
+    }
+  }, [user.role]);
+
+  const fetchApiStats = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/admin/api-stats', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setApiStats(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch API stats', err);
+    }
+  };
 
   const handleClearCache = async () => {
     setClearingCache(true);
@@ -176,6 +200,57 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
       setLoading(false);
     }
   };
+
+  const chartData = useMemo(() => {
+    if (!apiStats || !apiStats.requests) return [];
+    
+    let filteredRequests = apiStats.requests;
+    if (graphUserFilter !== 'all') {
+      filteredRequests = filteredRequests.filter((r: any) => r.userId === graphUserFilter);
+    }
+
+    const now = Date.now();
+    const result = [];
+
+    if (graphView === '24h') {
+      const msPerHour = 60 * 60 * 1000;
+      // create 24 buckets
+      const buckets = new Array(24).fill(0);
+      filteredRequests.forEach((req: any) => {
+        const hoursAgo = Math.floor((now - req.timestamp) / msPerHour);
+        if (hoursAgo >= 0 && hoursAgo < 24) {
+          buckets[hoursAgo]++;
+        }
+      });
+      // format for chart (from 23 hours ago to 0 hours ago)
+      for (let i = 23; i >= 0; i--) {
+        const d = new Date(now - i * msPerHour);
+        result.push({
+          label: `${d.getHours()}:00`,
+          requests: buckets[i]
+        });
+      }
+    } else {
+      const msPerDay = 24 * 60 * 60 * 1000;
+      // create 30 buckets
+      const buckets = new Array(30).fill(0);
+      filteredRequests.forEach((req: any) => {
+        const daysAgo = Math.floor((now - req.timestamp) / msPerDay);
+        if (daysAgo >= 0 && daysAgo < 30) {
+          buckets[daysAgo]++;
+        }
+      });
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date(now - i * msPerDay);
+        result.push({
+          label: `${d.getDate()}/${d.getMonth()+1}`,
+          requests: buckets[i]
+        });
+      }
+    }
+
+    return result;
+  }, [apiStats, graphView, graphUserFilter]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors">
@@ -353,7 +428,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
           </div>
         )}
 
-        {(user.role === 'admin' || user.role === 'moderator') && debugInfo && (
+        {(user.role === 'admin' || user.role === 'moderator') && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors mt-8">
             <button 
               onClick={() => setShowDebug(!showDebug)}
@@ -361,18 +436,93 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
             >
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 <Shield className="w-5 h-5 text-indigo-500" />
-                Admin Debug Info
+                Admin Panel (API & Debug Info)
               </h2>
               <span className="text-sm font-medium text-blue-600 dark:text-blue-400">
                 {showDebug ? 'Hide' : 'Show'}
               </span>
             </button>
             {showDebug && (
-              <div className="p-6 space-y-4">
-                {debugInfo.cacheStats && (
-                  <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 mb-4 border border-slate-200 dark:border-slate-700">
+              <div className="p-6 space-y-6">
+                
+                {/* API Requests Graph */}
+                <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+                    <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4" />
+                      API Requests Usage
+                    </h3>
+                    <div className="flex items-center gap-2">
+                      <select 
+                        value={graphUserFilter}
+                        onChange={(e) => setGraphUserFilter(e.target.value)}
+                        className="px-2 py-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-xs text-slate-900 dark:text-slate-100"
+                      >
+                        <option value="all">All Users</option>
+                        {apiStats?.users && Object.entries(apiStats.users).map(([id, name]) => (
+                          <option key={id} value={id}>{name as string}</option>
+                        ))}
+                      </select>
+                      <div className="bg-slate-200 dark:bg-slate-700 p-0.5 rounded flex items-center">
+                        <button 
+                          onClick={() => setGraphView('24h')}
+                          className={`px-2 py-1 text-xs rounded transition-colors ${graphView === '24h' ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                        >
+                          24h
+                        </button>
+                        <button 
+                          onClick={() => setGraphView('30d')}
+                          className={`px-2 py-1 text-xs rounded transition-colors ${graphView === '30d' ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'}`}
+                        >
+                          30d
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {apiStats ? (
+                    <div className="h-64 w-full mt-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.2} />
+                          <XAxis 
+                            dataKey="label" 
+                            tick={{ fill: '#64748b', fontSize: 11 }}
+                            axisLine={{ stroke: '#cbd5e1' }}
+                            tickLine={false}
+                          />
+                          <YAxis 
+                            tick={{ fill: '#64748b', fontSize: 11 }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc', fontSize: '12px' }}
+                            cursor={{ fill: '#334155', opacity: 0.1 }}
+                          />
+                          <Bar 
+                            dataKey="requests" 
+                            fill="#3b82f6" 
+                            radius={[4, 4, 0, 0]}
+                            maxBarSize={40}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-64 flex items-center justify-center text-sm text-slate-500">Loading graph data...</div>
+                  )}
+                  {apiStats?.currentRateLimit && (
+                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 flex justify-between">
+                      <span>Global Rate Limit (Past Hour): <strong>{apiStats.currentRateLimit.used} / {apiStats.currentRateLimit.limit}</strong></span>
+                    </div>
+                  )}
+                </div>
+
+                {debugInfo && debugInfo.cacheStats && (
+                  <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
                     <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center justify-between">
-                      <span>Cache Statistics</span>
+                      <span>Current Search Cache Statistics</span>
                       {debugInfo.cacheStats.timeOfLastSearch && (
                         <span className="text-xs font-normal text-slate-500 dark:text-slate-400">
                           Last searched: {new Date(debugInfo.cacheStats.timeOfLastSearch).toLocaleString()}
@@ -402,18 +552,20 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                         </div>
                       )}
                     </div>
-                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 flex justify-end">
-                      <button
-                        onClick={handleClearCache}
-                        disabled={clearingCache}
-                        className="px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-sm font-medium hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 flex items-center gap-2"
-                      >
-                        {clearingCache ? 'Clearing...' : 'Clear Cache'}
-                      </button>
-                    </div>
                   </div>
                 )}
-                {debugInfo.request && (
+                
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleClearCache}
+                    disabled={clearingCache}
+                    className="px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-sm font-medium hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {clearingCache ? 'Clearing...' : 'Clear Global Cache'}
+                  </button>
+                </div>
+
+                {debugInfo?.request && (
                   <div className="relative group">
                     <div className="flex justify-between items-center mb-2">
                       <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Raw Request</h3>
@@ -430,7 +582,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                     </pre>
                   </div>
                 )}
-                {debugInfo.response && (
+                {debugInfo?.response && (
                   <div className="relative group">
                     <div className="flex justify-between items-center mb-2">
                       <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Raw Response</h3>

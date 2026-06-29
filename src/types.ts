@@ -4,6 +4,11 @@ export interface User {
   name: string;
   role: 'admin' | 'instructor' | 'moderator';
   isApproved: boolean;
+  apiStats?: {
+    hour: number;
+    day: number;
+    month: number;
+  };
 }
 
 export interface Allocation {

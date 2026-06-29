@@ -46,6 +46,11 @@ db.exec(`
     createdAt INTEGER,
     updatedAt INTEGER
   );
+  CREATE TABLE IF NOT EXISTS api_requests (
+    id TEXT PRIMARY KEY,
+    timestamp INTEGER,
+    userId TEXT
+  );
 `);
 
 // Migration for existing users
@@ -211,7 +216,33 @@ async function startServer() {
   // Admin: Users Management
   app.get('/api/admin/users', authenticateToken, requireAdminOrModerator, (req, res) => {
     const users = db.prepare('SELECT id, email, name, role, isApproved FROM users ORDER BY name ASC').all() as any[];
-    res.json(users.map(u => ({ ...u, isApproved: Boolean(u.isApproved) })));
+    
+    const now = Date.now();
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    const oneHourAgo = now - ONE_HOUR_MS;
+    const oneDayAgo = now - 24 * ONE_HOUR_MS;
+    const oneMonthAgo = now - 30 * 24 * ONE_HOUR_MS;
+
+    const stats = db.prepare(`
+      SELECT userId, 
+             SUM(CASE WHEN timestamp > ? THEN 1 ELSE 0 END) as countHour,
+             SUM(CASE WHEN timestamp > ? THEN 1 ELSE 0 END) as countDay,
+             SUM(CASE WHEN timestamp > ? THEN 1 ELSE 0 END) as countMonth
+      FROM api_requests
+      WHERE timestamp > ?
+      GROUP BY userId
+    `).all(oneHourAgo, oneDayAgo, oneMonthAgo, oneMonthAgo) as any[];
+
+    const statsMap = new Map(stats.map(s => [s.userId, { hour: s.countHour || 0, day: s.countDay || 0, month: s.countMonth || 0 }]));
+
+    res.json(users.map(u => {
+      const uStats = statsMap.get(u.id) || { hour: 0, day: 0, month: 0 };
+      return { 
+        ...u, 
+        isApproved: Boolean(u.isApproved),
+        apiStats: uStats
+      };
+    }));
   });
 
   app.put('/api/admin/users/:id', authenticateToken, requireAdminOrModerator, (req: any, res) => {
@@ -396,30 +427,31 @@ async function startServer() {
   const CACHE_TTL_MS = 10 * 60 * 1000;
 
   // Rate Limiting
-  const apiRequestTimestamps: number[] = [];
   const MAX_REQUESTS_PER_HOUR = 4500;
   const ONE_HOUR_MS = 60 * 60 * 1000;
 
-  function recordAndCheckRateLimit() {
+  function checkRateLimit() {
     const now = Date.now();
     const oneHourAgo = now - ONE_HOUR_MS;
-    while (apiRequestTimestamps.length > 0 && apiRequestTimestamps[0] < oneHourAgo) {
-      apiRequestTimestamps.shift();
-    }
-    if (apiRequestTimestamps.length >= MAX_REQUESTS_PER_HOUR) {
+    const stmt = db.prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
+    const { count } = stmt.get(oneHourAgo) as { count: number };
+    if (count >= MAX_REQUESTS_PER_HOUR) {
       throw new Error('Global API rate limit exceeded (4500 requests per hour). Please try again later.');
     }
-    apiRequestTimestamps.push(now);
+  }
+
+  function recordApiRequest(userId: string) {
+    const stmt = db.prepare('INSERT INTO api_requests (id, timestamp, userId) VALUES (?, ?, ?)');
+    stmt.run(uuidv4(), Date.now(), userId);
   }
 
   function getRateLimitStats() {
     const now = Date.now();
     const oneHourAgo = now - ONE_HOUR_MS;
-    while (apiRequestTimestamps.length > 0 && apiRequestTimestamps[0] < oneHourAgo) {
-      apiRequestTimestamps.shift();
-    }
+    const stmt = db.prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
+    const { count } = stmt.get(oneHourAgo) as { count: number };
     return {
-      used: apiRequestTimestamps.length,
+      used: count,
       limit: MAX_REQUESTS_PER_HOUR
     };
   }
@@ -455,7 +487,8 @@ async function startServer() {
     }
 
     const fetchBoard = async (timeVal: string) => {
-      recordAndCheckRateLimit();
+      checkRateLimit();
+      recordApiRequest(req.user.id);
       const timeElement = timeVal ? `<ldb:time>${timeVal}</ldb:time>` : `<ldb:time>${new Date().toISOString().substring(0, 19)}</ldb:time>`;
       const xmlRequest = `<?xml version="1.0"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:typ="http://thalesgroup.com/RTTI/2013-11-28/Token/types" xmlns:ldb="http://thalesgroup.com/RTTI/2017-10-01/ldbsv/">
@@ -676,6 +709,33 @@ async function startServer() {
     }
     stationCache.clear();
     res.json({ message: 'Cache cleared successfully' });
+  });
+
+  // Admin: API Stats
+  app.get('/api/admin/api-stats', authenticateToken, (req: any, res) => {
+    if (req.user.role !== 'admin' && req.user.role !== 'moderator') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const now = Date.now();
+    const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
+    
+    // Get last 30 days data
+    const last30DaysData = db.prepare(`
+      SELECT timestamp, userId 
+      FROM api_requests 
+      WHERE timestamp > ?
+    `).all(thirtyDaysAgo) as { timestamp: number, userId: string }[];
+
+    // Get user details
+    const users = db.prepare('SELECT id, name FROM users').all() as { id: string, name: string }[];
+    const userMap = new Map(users.map(u => [u.id, u.name]));
+
+    res.json({
+      requests: last30DaysData,
+      users: Object.fromEntries(userMap),
+      currentRateLimit: getRateLimitStats()
+    });
   });
 
   // --- Vite / Static Files ---

@@ -232,6 +232,9 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                   <th className="px-6 py-4 font-medium cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('isApproved')}>
                     <div className="flex items-center">Status {renderSortIcon('isApproved')}</div>
                   </th>
+                  <th className="px-6 py-4 font-medium">
+                    <div className="flex items-center">API Usage (1h/24h/30d)</div>
+                  </th>
                   {user.role === 'admin' && (
                     <th className="px-6 py-4 font-medium text-right">Actions</th>
                   )}
@@ -296,6 +299,19 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                         {u.isApproved ? <Check className="w-3.5 h-3.5" /> : <Loader2 className="w-3.5 h-3.5" />}
                         {u.isApproved ? 'Approved' : 'Pending'}
                       </button>
+                    </td>
+                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300 font-mono text-sm">
+                      {u.apiStats ? (
+                        <div className="flex items-center gap-1">
+                          <span className={u.apiStats.hour > 0 ? "text-indigo-600 dark:text-indigo-400 font-semibold" : ""}>{u.apiStats.hour}</span>
+                          <span className="text-slate-400 dark:text-slate-500">/</span>
+                          <span className={u.apiStats.day > 0 ? "text-blue-600 dark:text-blue-400 font-semibold" : ""}>{u.apiStats.day}</span>
+                          <span className="text-slate-400 dark:text-slate-500">/</span>
+                          <span className={u.apiStats.month > 0 ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}>{u.apiStats.month}</span>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">0 / 0 / 0</span>
+                      )}
                     </td>
                     {user.role === 'admin' && (
                       <td className="px-6 py-4 text-right">
