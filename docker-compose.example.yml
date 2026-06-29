@@ -1,0 +1,15 @@
+services:
+  web:
+    container_name: job-allocator
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - JWT_SECRET=change_this_secret_in_production
+      - PUBLIC_URL=https://public.url.com
+    volumes:
+      - ./data:/app/data
