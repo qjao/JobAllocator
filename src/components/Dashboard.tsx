@@ -580,9 +580,15 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
                         {!alloc.isFullJob && alloc.headcodes.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
                             {alloc.headcodes.map(hc => (
-                              <span key={hc} className="bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-mono text-xs px-2 py-1 rounded-md transition-colors">
+                              <a 
+                                key={hc} 
+                                href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${alloc.date}&headcode=${hc}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-400 dark:hover:border-blue-500 font-mono text-xs px-2 py-1 rounded-md transition-colors block"
+                              >
                                 {hc}
-                              </span>
+                              </a>
                             ))}
                           </div>
                         )}

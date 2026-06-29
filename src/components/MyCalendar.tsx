@@ -532,9 +532,20 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                                   <CheckCircle2 className="w-3 h-3" /> Full Job
                                 </span>
                               ) : (
-                                <span className="text-[11px] font-mono text-slate-600 dark:text-slate-400 bg-slate-200/50 dark:bg-slate-700/50 px-1.5 py-0.5 rounded truncate min-w-0 transition-colors">
-                                  {alloc.headcodes.join(', ')}
-                                </span>
+                                <div className="flex flex-wrap gap-1 items-center overflow-hidden min-w-0">
+                                  {alloc.headcodes.map(hc => (
+                                    <a
+                                      key={hc}
+                                      href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${alloc.date}&headcode=${hc}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="text-[11px] font-mono text-slate-600 dark:text-slate-400 bg-slate-200/50 dark:bg-slate-700/50 px-1.5 py-0.5 rounded truncate min-w-0 transition-colors hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:underline"
+                                    >
+                                      {hc}
+                                    </a>
+                                  ))}
+                                </div>
                               )}
 
                               {!showOnlyMine && alloc.instructorId !== user.id && (
@@ -607,9 +618,15 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                   <span className="font-semibold text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider block mb-2">Headcodes</span>
                   <div className="flex flex-wrap gap-1.5">
                     {selectedAllocation.headcodes.map(hc => (
-                      <span key={hc} className="bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-mono text-xs px-2 py-1 rounded-md transition-colors">
+                      <a 
+                        key={hc} 
+                        href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${selectedAllocation.date}&headcode=${hc}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-400 dark:hover:border-blue-500 font-mono text-xs px-2 py-1 rounded-md transition-colors block"
+                      >
                         {hc}
-                      </span>
+                      </a>
                     ))}
                   </div>
                 </div>
