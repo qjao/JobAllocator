@@ -395,6 +395,35 @@ async function startServer() {
   const stationCache = new Map<string, StationCacheEntry>();
   const CACHE_TTL_MS = 10 * 60 * 1000;
 
+  // Rate Limiting
+  const apiRequestTimestamps: number[] = [];
+  const MAX_REQUESTS_PER_HOUR = 4500;
+  const ONE_HOUR_MS = 60 * 60 * 1000;
+
+  function recordAndCheckRateLimit() {
+    const now = Date.now();
+    const oneHourAgo = now - ONE_HOUR_MS;
+    while (apiRequestTimestamps.length > 0 && apiRequestTimestamps[0] < oneHourAgo) {
+      apiRequestTimestamps.shift();
+    }
+    if (apiRequestTimestamps.length >= MAX_REQUESTS_PER_HOUR) {
+      throw new Error('Global API rate limit exceeded (4500 requests per hour). Please try again later.');
+    }
+    apiRequestTimestamps.push(now);
+  }
+
+  function getRateLimitStats() {
+    const now = Date.now();
+    const oneHourAgo = now - ONE_HOUR_MS;
+    while (apiRequestTimestamps.length > 0 && apiRequestTimestamps[0] < oneHourAgo) {
+      apiRequestTimestamps.shift();
+    }
+    return {
+      used: apiRequestTimestamps.length,
+      limit: MAX_REQUESTS_PER_HOUR
+    };
+  }
+
   // NRE API: Get Departures
   app.get('/api/nre/departures', authenticateToken, async (req, res) => {
     const crs = req.query.crs as string;
@@ -426,6 +455,7 @@ async function startServer() {
     }
 
     const fetchBoard = async (timeVal: string) => {
+      recordAndCheckRateLimit();
       const timeElement = timeVal ? `<ldb:time>${timeVal}</ldb:time>` : `<ldb:time>${new Date().toISOString().substring(0, 19)}</ldb:time>`;
       const xmlRequest = `<?xml version="1.0"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:typ="http://thalesgroup.com/RTTI/2013-11-28/Token/types" xmlns:ldb="http://thalesgroup.com/RTTI/2017-10-01/ldbsv/">
@@ -626,7 +656,8 @@ async function startServer() {
             cachedTimeRange: allServicesSorted.length > 0 ? {
               start: String(allServicesSorted[0].std || '').substring(11, 16),
               end: String(allServicesSorted[allServicesSorted.length - 1].std || '').substring(11, 16)
-            } : null
+            } : null,
+            rateLimit: getRateLimitStats()
           }
         } 
       };

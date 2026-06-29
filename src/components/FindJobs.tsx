@@ -86,6 +86,10 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
         start: string;
         end: string;
       } | null;
+      rateLimit?: {
+        used: number;
+        limit: number;
+      };
     }
   } | null>(null);
   const [showDebug, setShowDebug] = useState(false);
@@ -384,6 +388,14 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                         <span className="text-slate-500 dark:text-slate-400">API Requests Made: </span>
                         <span className="font-mono font-medium text-slate-900 dark:text-slate-100">{debugInfo.cacheStats.apiRequestsMade}</span>
                       </div>
+                      {debugInfo.cacheStats.rateLimit && (
+                        <div className="sm:col-span-2">
+                          <span className="text-slate-500 dark:text-slate-400">Global API Usage (Past Hour): </span>
+                          <span className="font-mono font-medium text-slate-900 dark:text-slate-100">
+                            {debugInfo.cacheStats.rateLimit.used} / {debugInfo.cacheStats.rateLimit.limit}
+                          </span>
+                        </div>
+                      )}
                       {debugInfo.cacheStats.cachedTimeRange && (
                         <div className="sm:col-span-2 text-xs text-slate-500 dark:text-slate-400 italic">
                           Cached items from {debugInfo.cacheStats.cachedTimeRange.start} to {debugInfo.cacheStats.cachedTimeRange.end}.
