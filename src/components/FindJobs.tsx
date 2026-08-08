@@ -22,51 +22,91 @@ interface TrainService {
   headcode: string;
 }
 
-const ELIZABETH_LINE_STATIONS = [
-  { crs: 'ABW', name: 'Abbey Wood' },
-  { crs: 'WWC', name: 'Woolwich' },
-  { crs: 'CUS', name: 'Custom House' },
-  { crs: 'CWX', name: 'Canary Wharf' },
-  { crs: 'ZLW', name: 'Whitechapel' },
-  { crs: 'SRA', name: 'Stratford (London)' },
-  { crs: 'MYL', name: 'Maryland' },
-  { crs: 'FOG', name: 'Forest Gate' },
-  { crs: 'MNP', name: 'Manor Park' },
-  { crs: 'IFD', name: 'Ilford' },
-  { crs: 'SVK', name: 'Seven Kings' },
-  { crs: 'GMY', name: 'Goodmayes' },
-  { crs: 'CTH', name: 'Chadwell Heath' },
-  { crs: 'RMF', name: 'Romford' },
-  { crs: 'GDP', name: 'Gidea Park' },
-  { crs: 'HRO', name: 'Harold Wood' },
-  { crs: 'BRE', name: 'Brentwood' },
-  { crs: 'SNF', name: 'Shenfield' },
-  { crs: 'LST', name: 'Liverpool Street' },
-  { crs: 'ZFD', name: 'Farringdon' },
-  { crs: 'TCR', name: 'Tottenham Court Road' },
-  { crs: 'BDS', name: 'Bond Street' },
-  { crs: 'PAD', name: 'Paddington' },
-  { crs: 'EAL', name: 'Ealing Broadway' },
-  { crs: 'STL', name: 'Southall' },
-  { crs: 'HAY', name: 'Hayes & Harlington' },
-  { crs: 'HXX', name: 'Heathrow Central' },
-  { crs: 'HAF', name: 'Heathrow Terminal 4' },
-  { crs: 'HWV', name: 'Heathrow Terminal 5' },
-  { crs: 'WDT', name: 'West Drayton' },
-  { crs: 'IVR', name: 'Iver' },
-  { crs: 'LNY', name: 'Langley' },
-  { crs: 'SLO', name: 'Slough' },
-  { crs: 'BNM', name: 'Burnham' },
-  { crs: 'TAP', name: 'Taplow' },
-  { crs: 'MAI', name: 'Maidenhead' },
-  { crs: 'TWY', name: 'Twyford' },
-  { crs: 'RDG', name: 'Reading' },
+const ELIZABETH_LINE_LOCATIONS = [
+  // TIPLOCs without CRS
+  { tiploc: 'MDNHDRS', name: 'Maidenhead Turnback' },
+  { tiploc: 'OLDOENG', name: 'Old Oak Engine Sdg' },
+  { tiploc: 'ROYAOSD', name: 'Royal Oak Sidings' },
+  { tiploc: 'OLDOXRS', name: 'Old Oak Depot' },
+  { tiploc: 'MDNHDCS', name: 'Maidenhead CS' },
+  { tiploc: 'GIDEPKS', name: 'Gidea Park CS' },
+  { tiploc: 'SHENFMS', name: 'Shenfield CS' },
+  { tiploc: 'ILFEMUD', name: 'Ilford E.M.U.D.' },
+  // Stations with both CRS and TIPLOC
+  { crs: 'ABW', tiploc: 'ABWDXR', name: 'Abbey Wood' },
+  { crs: 'WWC', tiploc: 'WOLWXR', name: 'Woolwich' },
+  { crs: 'CUS', tiploc: 'CUSTMHS', name: 'Custom House' },
+  { crs: 'CWX', tiploc: 'CANWHRF', name: 'Canary Wharf' },
+  { crs: 'ZLW', tiploc: 'WCHAPXR', name: 'Whitechapel' },
+  { crs: 'SRA', tiploc: 'STFD', name: 'Stratford (London)' },
+  { crs: 'MYL', tiploc: 'MRYLAND', name: 'Maryland' },
+  { crs: 'FOG', tiploc: 'FRSTGT', name: 'Forest Gate' },
+  { crs: 'MNP', tiploc: 'MANRPK', name: 'Manor Park' },
+  { crs: 'IFD', tiploc: 'ILFORD', name: 'Ilford' },
+  { crs: 'SVK', tiploc: 'SVNKNGS', name: 'Seven Kings' },
+  { crs: 'GMY', tiploc: 'GODMAYS', name: 'Goodmayes' },
+  { crs: 'CTH', tiploc: 'CHDWLHT', name: 'Chadwell Heath' },
+  { crs: 'RMF', tiploc: 'ROMFORD', name: 'Romford' },
+  { crs: 'GDP', tiploc: 'GIDEAPK', name: 'Gidea Park' },
+  { crs: 'HRO', tiploc: 'HRLDWOD', name: 'Harold Wood' },
+  { crs: 'BRE', tiploc: 'BRTWOOD', name: 'Brentwood' },
+  { crs: 'SNF', tiploc: 'SHENFLD', name: 'Shenfield' },
+  { crs: 'LST', tiploc: 'LIVSTLL', name: 'Liverpool Street' },
+  // { crs: 'LST', tiploc: 'LIVST', name: 'Liverpool Street HL' },
+  { crs: 'ZFD', tiploc: 'FRNDXR', name: 'Farringdon' },
+  { crs: 'TCR', tiploc: 'TOTCTRD', name: 'Tottenham Court Road' },
+  { crs: 'BDS', tiploc: 'BONDST', name: 'Bond Street' },
+  { crs: 'PAD', tiploc: 'PADTLL', name: 'Paddington LL' },
+  // { crs: 'PAD', tiploc: 'PADTON', name: 'Paddington GW' },
+  { crs: 'AML', tiploc: 'ACTONML', name: 'Acton Main Line' },
+  { crs: 'EAL', tiploc: 'EALINGB', name: 'Ealing Broadway' },
+  { crs: 'WEA', tiploc: 'WEALING', name: 'West Ealing' },
+  { crs: 'HAN', tiploc: 'HANWELL', name: 'Hanwell' },
+  { crs: 'STL', tiploc: 'STHALL', name: 'Southall' },
+  { crs: 'HAY', tiploc: 'HAYESAH', name: 'Hayes & Harlington' },
+  { crs: 'HXX', tiploc: 'HTRWAPT', name: 'Heathrow Central' },
+  { crs: 'HAF', tiploc: 'HTRWTM4', name: 'Heathrow Terminal 4' },
+  { crs: 'HWV', tiploc: 'HTRWTM5', name: 'Heathrow Terminal 5' },
+  { crs: 'WDT', tiploc: 'WDRYTON', name: 'West Drayton' },
+  { crs: 'IVR', tiploc: 'IVER', name: 'Iver' },
+  { crs: 'LNY', tiploc: 'LANGLEY', name: 'Langley' },
+  { crs: 'SLO', tiploc: 'SLOUGH', name: 'Slough' },
+  { crs: 'BNM', tiploc: 'BNHAM', name: 'Burnham' },
+  { crs: 'TAP', tiploc: 'TAPLOW', name: 'Taplow' },
+  { crs: 'MAI', tiploc: 'MDNHEAD', name: 'Maidenhead' },
+  { crs: 'TWY', tiploc: 'TWYFORD', name: 'Twyford' },
+  { crs: 'RDG', tiploc: 'RDNGSTN', name: 'Reading' },
+].sort((a, b) => a.name.localeCompare(b.name));
+
+const ELIZABETH_LINE_DESTINATIONS = [
+  // TIPLOCs without CRS
+  { tiploc: 'MDNHDRS', name: 'Maidenhead Turnback' },
+  { tiploc: 'OLDOENG', name: 'Old Oak Engine Sdg' },
+  { tiploc: 'ROYAOSD', name: 'Royal Oak Sidings' },
+  { tiploc: 'OLDOXRS', name: 'Old Oak Depot' },
+  { tiploc: 'MDNHDCS', name: 'Maidenhead CS' },
+  { tiploc: 'GIDEPKS', name: 'Gidea Park CS' },
+  { tiploc: 'SHENFMS', name: 'Shenfield CS' },
+  { tiploc: 'ILFEMUD', name: 'Ilford E.M.U.D.' },
+  // Stations with both CRS and TIPLOC
+  { crs: 'ABW', tiploc: 'ABWDXR', name: 'Abbey Wood' },
+  { crs: 'GDP', tiploc: 'GIDEAPK', name: 'Gidea Park' },
+  { crs: 'SNF', tiploc: 'SHENFLD', name: 'Shenfield' },
+  { crs: 'LST', tiploc: 'LIVSTLL', name: 'Liverpool Street' },
+  // { crs: 'LST', tiploc: 'LIVST', name: 'Liverpool Street HL' },
+  { crs: 'PAD', tiploc: 'PADTLL', name: 'Paddington LL' },
+  // { crs: 'PAD', tiploc: 'PADTON', name: 'Paddington GW' },
+  { crs: 'HAY', tiploc: 'HAYESAH', name: 'Hayes & Harlington' },
+  { crs: 'HAF', tiploc: 'HTRWTM4', name: 'Heathrow Terminal 4' },
+  { crs: 'HWV', tiploc: 'HTRWTM5', name: 'Heathrow Terminal 5' },
+  { crs: 'MAI', tiploc: 'MDNHEAD', name: 'Maidenhead' },
+  { crs: 'RDG', tiploc: 'RDNGSTN', name: 'Reading' },
 ].sort((a, b) => a.name.localeCompare(b.name));
 
 import Header from './Header';
 
 export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: FindJobsProps) {
-  const [crs, setCrs] = useState('PAD');
+  const [crs, setCrs] = useState('PADTLL');
   const [date, setDate] = useState('');
   const [hour, setHour] = useState('');
   const [minute, setMinute] = useState('');
@@ -156,13 +196,14 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanCrs = crs.trim().toUpperCase();
-    if (cleanCrs.length !== 3) {
-      setError('CRS code must be exactly 3 letters.');
+    if (!cleanCrs) {
+      setError('CRS code is required.');
       return;
     }
     const cleanFilterCrs = filterCrs.trim().toUpperCase();
-    if (cleanFilterCrs && cleanFilterCrs.length !== 3) {
-      setError('Calling At CRS code must be exactly 3 letters if provided.');
+
+    if (cleanCrs.length > 3 && cleanFilterCrs.length > 3) {
+      setError('At least one standard station must be selected (cannot search from a Depot/Sidings to another Depot/Sidings).');
       return;
     }
 
@@ -273,7 +314,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 transition-colors">
           <form onSubmit={handleSearch} className="flex flex-col sm:flex-row items-end gap-2 sm:gap-3">
             <div className="flex-1 w-full sm:w-auto min-w-0">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 truncate">Station From</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 truncate">Origin</label>
               <select
                 value={crs}
                 onChange={(e) => setCrs(e.target.value)}
@@ -281,16 +322,16 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                 required
               >
                 <option value="" disabled>Select station...</option>
-                {ELIZABETH_LINE_STATIONS.map((station) => (
-                  <option key={station.crs} value={station.crs}>
-                    {station.name} ({station.crs})
+                {ELIZABETH_LINE_LOCATIONS.map((station) => (
+                  <option key={station.tiploc} value={station.crs || station.tiploc}>
+                    {station.name} ({station.crs ? `${station.crs} / ${station.tiploc}` : station.tiploc})
                   </option>
                 ))}
               </select>
             </div>
             
             <div className="flex-1 w-full sm:w-auto min-w-0">
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 truncate">Calling At</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 truncate">Destination</label>
               <select
                 value={filterCrs}
                 onChange={(e) => setFilterCrs(e.target.value)}
@@ -298,9 +339,9 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                 required
               >
                 <option value="" disabled>Select station...</option>
-                {ELIZABETH_LINE_STATIONS.map((station) => (
-                  <option key={station.crs} value={station.crs}>
-                    {station.name} ({station.crs})
+                {ELIZABETH_LINE_DESTINATIONS.map((station) => (
+                  <option key={station.tiploc} value={station.crs || station.tiploc}>
+                    {station.name} ({station.crs ? `${station.crs} / ${station.tiploc}` : station.tiploc})
                   </option>
                 ))}
               </select>
@@ -342,7 +383,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
 
             <button
               type="submit"
-              disabled={loading || crs.length !== 3}
+              disabled={loading || !crs.trim()}
               className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 h-[42px] w-full sm:w-auto"
             >
               {loading ? (
@@ -359,7 +400,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
               <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold">Error fetching departures</p>
-                <p>{error}</p>
+                <p className="whitespace-pre-wrap font-mono text-xs mt-2 overflow-x-auto">{error}</p>
                 {error.includes('NRE_STAFF_TOKEN') && (
                   <p className="mt-2 text-xs opacity-80">
                     The server needs an NRE_STAFF_TOKEN environment variable configured to access the National Rail Enquiries OpenLDBWS API.

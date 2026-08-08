@@ -171,7 +171,14 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
       return `Invalid depot code. Must be one of: ${Object.keys(validDepots).join(', ')}.`;
     }
 
-    if (validDepots[depotCode] !== depotNum) {
+    const exceptionSuffixes: Record<string, string[]> = {
+      'GP': ['001'],
+      'IF': ['002']
+    };
+    
+    const isException = exceptionSuffixes[depotCode]?.includes(upperJob.substring(3));
+
+    if (!isException && validDepots[depotCode] !== depotNum) {
       return `Invalid depot number for ${depotCode}. Expected ${validDepots[depotCode]}, got ${depotNum}.`;
     }
 

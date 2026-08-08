@@ -456,22 +456,42 @@ async function startServer() {
     };
   }
 
+const CRS_TO_TIPLOC: Record<string, string> = {
+  'ABW': 'ABWDXR', 'WWC': 'WOLWXR', 'CUS': 'CUSTMHS', 'CWX': 'CANWHRF',
+  'ZLW': 'WCHAPXR', 'SRA': 'STFD', 'MYL': 'MRYLAND', 'FOG': 'FRSTGT',
+  'MNP': 'MANRPK', 'IFD': 'ILFORD', 'SVK': 'SVNKNGS', 'GMY': 'GODMAYS',
+  'CTH': 'CHDWLHT', 'RMF': 'ROMFORD', 'GDP': 'GIDEAPK', 'HRO': 'HRLDWOD',
+  'BRE': 'BRTWOOD', 'SNF': 'SHENFLD', 'LST': 'LIVSTLL', 'ZFD': 'FRNDXR',
+  'TCR': 'TOTCTRD', 'BDS': 'BONDST', 'PAD': 'PADTLL', 'AML': 'ACTONML',
+  'EAL': 'EALINGB', 'WEA': 'WEALING', 'HAN': 'HANWELL', 'STL': 'STHALL',
+  'HAY': 'HAYESAH', 'HXX': 'HTRWAPT', 'HAF': 'HTRWTM4', 'HWV': 'HTRWTM5',
+  'WDT': 'WDRYTON', 'IVR': 'IVER', 'LNY': 'LANGLEY', 'SLO': 'SLOUGH',
+  'BNM': 'BNHAM', 'TAP': 'TAPLOW', 'MAI': 'MDNHEAD', 'TWY': 'TWYFORD',
+  'RDG': 'RDNGSTN',
+};
+
+const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
+
   // NRE API: Get Departures
   app.get('/api/nre/departures', authenticateToken, async (req, res) => {
     const crs = req.query.crs as string;
     const initialTime = req.query.time as string;
     const filterCrs = req.query.filterCrs as string;
 
-    if (!crs || crs.length !== 3) {
-      return res.status(400).json({ error: 'Valid 3-letter CRS code is required' });
+    if (!crs) {
+      return res.status(400).json({ error: 'CRS code is required' });
     }
     
     const targetCrsKey = crs.toUpperCase();
-    let cachedCrsEntry = stationCache.get(targetCrsKey);
+    const isOriginTiplocOnly = targetCrsKey.length > 3;
+    const isDestinationTiplocOnly = filterCrs && filterCrs.length > 3;
+    const cacheKey = isOriginTiplocOnly && filterCrs ? `${targetCrsKey}_${filterCrs.toUpperCase()}` : targetCrsKey;
+    
+    let cachedCrsEntry = stationCache.get(cacheKey);
     
     if (cachedCrsEntry && (Date.now() - cachedCrsEntry.timestamp > CACHE_TTL_MS)) {
       cachedCrsEntry = undefined;
-      stationCache.delete(targetCrsKey);
+      stationCache.delete(cacheKey);
     }
 
     const allServicesMap = new Map();
@@ -490,6 +510,57 @@ async function startServer() {
       checkRateLimit();
       recordApiRequest(req.user.id);
       const timeElement = timeVal ? `<ldb:time>${timeVal}</ldb:time>` : `<ldb:time>${new Date().toISOString().substring(0, 19)}</ldb:time>`;
+      
+      let requestName = '';
+      let requestInner = '';
+
+      if (isOriginTiplocOnly && filterCrs) {
+          requestName = 'GetArrivalBoardByTIPLOCRequest';
+          requestInner = `
+          <ldb:numRows>150</ldb:numRows>
+          <ldb:tiploc>${getTiploc(filterCrs.toUpperCase())}</ldb:tiploc>
+          ${timeElement}
+          <ldb:timeWindow>120</ldb:timeWindow>
+          <ldb:filterTiploc>${getTiploc(targetCrsKey)}</ldb:filterTiploc>
+          <ldb:filterType>from</ldb:filterType>
+          <ldb:filterTOC>XR</ldb:filterTOC>
+          <ldb:getNonPassengerServices>true</ldb:getNonPassengerServices>`;
+      } else if (isOriginTiplocOnly && !filterCrs) {
+          // Fallback if no destination is selected but origin is tiploc only
+          requestName = 'GetDepartureBoardByTIPLOCRequest';
+          requestInner = `
+          <ldb:numRows>150</ldb:numRows>
+          <ldb:tiploc>${getTiploc(targetCrsKey)}</ldb:tiploc>
+          ${timeElement}
+          <ldb:timeWindow>120</ldb:timeWindow>
+          <ldb:filterTOC>XR</ldb:filterTOC>
+          <ldb:getNonPassengerServices>true</ldb:getNonPassengerServices>`;
+      } else if (isDestinationTiplocOnly) {
+          requestName = 'GetDepartureBoardByTIPLOCRequest';
+          requestInner = `
+          <ldb:numRows>150</ldb:numRows>
+          <ldb:tiploc>${getTiploc(targetCrsKey)}</ldb:tiploc>
+          ${timeElement}
+          <ldb:timeWindow>120</ldb:timeWindow>
+          <ldb:filterTiploc>${getTiploc(filterCrs.toUpperCase())}</ldb:filterTiploc>
+          <ldb:filterType>to</ldb:filterType>
+          <ldb:filterTOC>XR</ldb:filterTOC>
+          <ldb:getNonPassengerServices>true</ldb:getNonPassengerServices>`;
+      } else {
+          requestName = 'GetDepBoardWithDetailsRequest';
+          requestInner = `
+          <ldb:numRows>10</ldb:numRows>
+          <ldb:crs>${targetCrsKey}</ldb:crs>
+          ${timeElement}
+          <ldb:timeWindow>120</ldb:timeWindow>
+          <ldb:filterTOC>XR</ldb:filterTOC>
+          <ldb:getNonPassengerServices>false</ldb:getNonPassengerServices>`;
+      }
+
+      const requestBody = `
+      <ldb:${requestName}>${requestInner}
+      </ldb:${requestName}>`;
+
       const xmlRequest = `<?xml version="1.0"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:typ="http://thalesgroup.com/RTTI/2013-11-28/Token/types" xmlns:ldb="http://thalesgroup.com/RTTI/2017-10-01/ldbsv/">
     <soap:Header>
@@ -497,17 +568,7 @@ async function startServer() {
             <typ:TokenValue>${token}</typ:TokenValue>
         </typ:AccessToken>
     </soap:Header>
-    <soap:Body>
-        <ldb:GetDepBoardWithDetailsRequest>
-            <ldb:numRows>10</ldb:numRows>
-            <ldb:crs>${crs.toUpperCase()}</ldb:crs>
-            ${timeElement}
-            <ldb:timeWindow>120</ldb:timeWindow>
-            <ldb:filterType>to</ldb:filterType>
-            <ldb:filterTOC>XR</ldb:filterTOC>
-            <ldb:getNonPassengerServices>false</ldb:getNonPassengerServices>
-        </ldb:GetDepBoardWithDetailsRequest>
-    </soap:Body>
+    <soap:Body>${requestBody}</soap:Body>
 </soap:Envelope>`;
 
       const response = await fetch('https://lite.realtime.nationalrail.co.uk/OpenLDBSVWS/ldbsv12.asmx', {
@@ -522,7 +583,7 @@ async function startServer() {
       if (!response.ok) {
         const errText = await response.text();
         console.error('NRE API Error response:', errText);
-        throw new Error(`NRE API responded with status: ${response.status}. Details: ${errText}`);
+        throw new Error(`NRE API responded with status: ${response.status}. Details: ${errText}\n\nRaw Request:\n${xmlRequest}`);
       }
 
       const xmlResponse = await response.text();
@@ -530,7 +591,7 @@ async function startServer() {
         ignoreAttributes: false,
         removeNSPrefix: true,
       });
-      return { jsonObj: parser.parse(xmlResponse), xmlRequest, xmlResponse };
+      return { jsonObj: parser.parse(xmlResponse), xmlRequest, xmlResponse, requestName };
     };
 
     try {
@@ -546,30 +607,29 @@ async function startServer() {
         return aTime.localeCompare(bTime);
       });
 
-      let fetchLoopsNeeded = 3;
+      let fetchLoopsNeeded = (!isOriginTiplocOnly && !isDestinationTiplocOnly && filterCrs) ? 3 : 1;
       let currentTime = targetTime;
 
       if (validCachedServices.length >= 30) {
         fetchLoopsNeeded = 0;
-      } else if (validCachedServices.length > 0) {
-        const needed = 30 - validCachedServices.length;
-        fetchLoopsNeeded = Math.min(3, Math.ceil(needed / 10));
-        
-        const lastS = validCachedServices[validCachedServices.length - 1];
-        if (lastS.std) {
-          currentTime = String(lastS.std).substring(0, 19);
-        }
       }
 
       let lastRequest = cachedCrsEntry ? cachedCrsEntry.lastRequest : '';
       let lastResponse = cachedCrsEntry ? cachedCrsEntry.lastResponse : '';
 
       for (let i = 0; i < fetchLoopsNeeded; i++) {
-        const { jsonObj, xmlRequest, xmlResponse } = await fetchBoard(currentTime);
+        const { jsonObj, xmlRequest, xmlResponse, requestName } = await fetchBoard(currentTime);
         lastRequest += (lastRequest ? '\n\n=== NEXT REQUEST ===\n\n' : '') + xmlRequest;
         lastResponse += (lastResponse ? '\n\n=== NEXT RESPONSE ===\n\n' : '') + xmlResponse;
         
-        let services = jsonObj?.Envelope?.Body?.GetDepBoardWithDetailsResponse?.GetBoardWithDetailsResult?.trainServices?.service;
+        let responseName = requestName;
+        if (requestName === 'GetArrivalBoardByTIPLOCRequest') {
+            responseName = 'GetArrivalBoardByTIPLOCResponse';
+        } else {
+            responseName = requestName.replace('Request', 'Response');
+        }
+        let services = jsonObj?.Envelope?.Body?.[responseName]?.GetBoardResult?.trainServices?.service 
+            || jsonObj?.Envelope?.Body?.[responseName]?.GetBoardWithDetailsResult?.trainServices?.service;
         if (!services) break;
         
         const servicesArray = Array.isArray(services) ? services : [services];
@@ -581,18 +641,18 @@ async function startServer() {
             allServicesMap.set(uniqueKey, s);
           }
         }
-
-        const lastService = servicesArray[servicesArray.length - 1];
-        if (!lastService.std) break;
         
-        const nextTime = String(lastService.std).substring(0, 19);
-        if (nextTime === currentTime) {
-           break;
+        // Advance time for the next loop to fetch more services
+        const lastService = servicesArray[servicesArray.length - 1];
+        if (lastService) {
+            const timeStr = lastService.std || lastService.sta;
+            if (timeStr) {
+                currentTime = String(timeStr).substring(0, 19);
+            }
         }
-        currentTime = nextTime;
       }
 
-      stationCache.set(targetCrsKey, {
+      stationCache.set(cacheKey, {
         timestamp: Date.now(),
         servicesMap: allServicesMap,
         lastRequest,
@@ -600,35 +660,63 @@ async function startServer() {
       });
 
       let servicesArray = Array.from(allServicesMap.values()).filter((s: any) => {
-        const sTime = s.std ? String(s.std).substring(0, 19) : '';
+        const sTime = s.std ? String(s.std).substring(0, 19) : (s.sta ? String(s.sta).substring(0, 19) : '');
         return sTime >= targetTime;
       });
       
       servicesArray.sort((a: any, b: any) => {
-        const aTime = a.std ? String(a.std).substring(0, 19) : '';
-        const bTime = b.std ? String(b.std).substring(0, 19) : '';
+        const aTime = a.std ? String(a.std).substring(0, 19) : (a.sta ? String(a.sta).substring(0, 19) : '');
+        const bTime = b.std ? String(b.std).substring(0, 19) : (b.sta ? String(b.sta).substring(0, 19) : '');
         return aTime.localeCompare(bTime);
       });
       
-      if (filterCrs) {
-        const destTargetCrs = filterCrs.toUpperCase();
+      const isReverseArrival = isOriginTiplocOnly && filterCrs;
+      if (isReverseArrival) {
+        const originTarget = targetCrsKey.toUpperCase();
+        servicesArray = servicesArray.filter((s: any) => {
+          let origCrs = '';
+          let origTiploc = '';
+          if (s.origin?.location) {
+            const origLoc = Array.isArray(s.origin.location) ? s.origin.location[0] : s.origin.location;
+            origCrs = origLoc.crs;
+            origTiploc = origLoc.tiploc;
+          }
+          if (origCrs === originTarget || origTiploc === originTarget) return true;
+
+          const locs = s.previousCallingPoints?.callingPointList?.callingPoint || s.previousLocations?.location || [];
+          const locsArray = Array.isArray(locs) ? locs : [locs];
+          return locsArray.some((l: any) => l.crs === originTarget || l.tiploc === originTarget);
+        });
+      } else if (filterCrs) {
+        const destTarget = filterCrs.toUpperCase();
+        console.log(`Filtering services for destTarget: ${destTarget}`);
         servicesArray = servicesArray.filter((s: any) => {
           let destCrs = '';
+          let destTiploc = '';
           if (s.destination?.location) {
             const destLoc = Array.isArray(s.destination.location) ? s.destination.location[0] : s.destination.location;
             destCrs = destLoc.crs;
+            destTiploc = destLoc.tiploc;
           }
-          if (destCrs === destTargetCrs) return true;
+          if (destCrs === destTarget || destTiploc === destTarget) {
+            console.log(`Service ${s.trainid} matched by final destination.`);
+            return true;
+          }
 
-          const locs = s.subsequentLocations?.location || [];
+          const locs = s.subsequentCallingPoints?.callingPointList?.callingPoint || s.subsequentLocations?.location || [];
           const locsArray = Array.isArray(locs) ? locs : [locs];
-          return locsArray.some((l: any) => l.crs === destTargetCrs);
+          const hasMatch = locsArray.some((l: any) => l.crs === destTarget || l.tiploc === destTarget);
+          if (hasMatch) {
+            console.log(`Service ${s.trainid} matched by subsequent location.`);
+          } else {
+            console.log(`Service ${s.trainid} dropped. locsArray: ${JSON.stringify(locsArray.map((l: any) => l.crs || l.tiploc))}`);
+          }
+          return hasMatch;
         });
       }
 
-      // Limit after filter, but actually the client wants to see max results possible.
-      // We fetched up to 30 un-filtered services. It's okay to return what we have.
-      servicesArray = servicesArray.slice(0, 30);
+      // Limit to 10 services
+      servicesArray = servicesArray.slice(0, 10);
 
       const parsedServices = servicesArray.map((s: any) => {
         let destination = 'Unknown';
@@ -636,17 +724,17 @@ async function startServer() {
           destination = Array.isArray(s.destination.location) ? s.destination.location[0].locationName : s.destination.location.locationName;
         }
 
-        const stdTime = s.std ? String(s.std).substring(11, 16) : '';
+        const stdTime = s.std ? String(s.std).substring(11, 16) : (s.sta ? String(s.sta).substring(11, 16) : '');
         
         let status = '';
         if (s.isCancelled === true || s.isCancelled === 'true') {
           status = 'Cancelled';
         } else if (s.cancelReason) {
           status = 'Cancelled';
-        } else if (s.departureType === 'Delayed') {
+        } else if (s.departureType === 'Delayed' || s.arrivalType === 'Delayed') {
           status = 'Delayed';
         } else {
-          const actualOrEst = s.atd || s.etd;
+          const actualOrEst = s.atd || s.etd || s.ata || s.eta;
           if (actualOrEst) {
             const timeVal = String(actualOrEst).substring(11, 16);
             if (stdTime && timeVal <= stdTime) {
