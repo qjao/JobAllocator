@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Plus, AlertTriangle, X } from 'lucide-react';
+import { Loader2, Plus, AlertTriangle, X, Pencil } from 'lucide-react';
 import { Allocation } from '../types';
 
 interface JobData {
@@ -22,6 +22,13 @@ interface DiagramSelectorProps {
   submitting?: boolean;
   onCancel?: () => void;
   title?: string;
+  initialAllocation?: {
+    jobNumber: string;
+    isFullJob: boolean;
+    headcodes: string[];
+    notes?: string;
+  };
+  children?: React.ReactNode;
 }
 
 const DEPOT_NAMES: Record<string, string> = {
@@ -34,7 +41,7 @@ const DEPOT_NAMES: Record<string, string> = {
   'SH': 'Shenfield'
 };
 
-export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title }: DiagramSelectorProps) {
+export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, initialAllocation, children }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
   
@@ -43,12 +50,13 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   const [headcodesMap, setHeadcodesMap] = useState<Record<string, string[]>>({});
   
   // Selection state
-  const [selectedDepot, setSelectedDepot] = useState<string>('');
-  const [selectedDiagram, setSelectedDiagram] = useState<string>('');
+  const [selectedDepot, setSelectedDepot] = useState<string>(initialAllocation ? initialAllocation.jobNumber.substring(0, 2) : '');
+  const [selectedDiagram, setSelectedDiagram] = useState<string>(initialAllocation?.jobNumber || '');
   const [selectedHeadcodeIndices, setSelectedHeadcodeIndices] = useState<number[]>([]);
-  const [isFullDiagram, setIsFullDiagram] = useState<boolean>(true);
-  const [showNotes, setShowNotes] = useState<boolean>(false);
-  const [notesInput, setNotesInput] = useState<string>('');
+  const [isFullDiagram, setIsFullDiagram] = useState<boolean>(initialAllocation?.isFullJob ?? true);
+  const [showNotes, setShowNotes] = useState<boolean>(!!initialAllocation?.notes);
+  const [notesInput, setNotesInput] = useState<string>(initialAllocation?.notes || '');
+  const [initialized, setInitialized] = useState<boolean>(!initialAllocation);
 
   // Derived data
   const [depots, setDepots] = useState<string[]>([]);
@@ -142,11 +150,18 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       });
       
       setAvailableDiagrams(Array.from(dedupedMap.values()));
+    } else {
+      setAvailableDiagrams([]);
+    }
+  }, [selectedDepot, jobs, selectedDate]);
+
+  useEffect(() => {
+    if (selectedDiagram && selectedDepot && !selectedDiagram.startsWith(selectedDepot)) {
       setSelectedDiagram('');
       setAvailableHeadcodes([]);
       setSelectedHeadcodeIndices([]);
     }
-  }, [selectedDepot, jobs, selectedDate]);
+  }, [selectedDepot, selectedDiagram]);
 
   // Handle diagram selection change without clearing headcodes if same diagram
   const claimedHeadcodes = React.useMemo(() => {
@@ -176,7 +191,24 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
         const key = job.isStp ? `stp_${job.jobid}` : `ltp_${job.jobid}`;
         const hcs = headcodesMap[key] || [];
         setAvailableHeadcodes(hcs);
-        if (isFullDiagram) {
+        
+        if (!initialized && initialAllocation) {
+          if (initialAllocation.isFullJob) {
+            setSelectedHeadcodeIndices(hcs.map((_, i) => i));
+            setIsFullDiagram(true);
+          } else {
+            const indices = initialAllocation.headcodes
+              .map(hc => hcs.indexOf(hc))
+              .filter(i => i !== -1);
+            setSelectedHeadcodeIndices(indices);
+            if (indices.length === hcs.length && hcs.length > 0) {
+              setIsFullDiagram(true);
+            } else {
+              setIsFullDiagram(false);
+            }
+          }
+          setInitialized(true);
+        } else if (isFullDiagram) {
           setSelectedHeadcodeIndices(hcs.map((_, i) => i));
         }
       }
@@ -184,16 +216,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       setAvailableHeadcodes([]);
       setSelectedHeadcodeIndices([]);
     }
-  }, [selectedDiagram, jobs, headcodesMap]);
-
-  useEffect(() => {
-    if (isFullDiagram && availableHeadcodes.length > 0 && !isPartiallyBooked) {
-      setSelectedHeadcodeIndices(availableHeadcodes.map((_, i) => i));
-    } else if (!isFullDiagram && availableHeadcodes.length > 0 && selectedHeadcodeIndices.length === availableHeadcodes.length) {
-      // If it was full, but user unchecks full diagram natively (not by clicking a child)
-      setSelectedHeadcodeIndices([]);
-    }
-  }, [isFullDiagram, availableHeadcodes, isPartiallyBooked]);
+  }, [selectedDiagram, jobs, headcodesMap, availableDiagrams, initialized, initialAllocation]);
 
   const handleHeadcodeToggle = (idx: number) => {
     if (isFullDiagram) {
@@ -207,24 +230,37 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
         newSelection.push(idx);
       }
       setSelectedHeadcodeIndices(newSelection);
+      if (newSelection.length === availableHeadcodes.length && availableHeadcodes.length > 0) {
+        setIsFullDiagram(true);
+      }
     }
   };
 
   const handleFullDiagramToggle = () => {
-    setIsFullDiagram(!isFullDiagram);
+    const nextState = !isFullDiagram;
+    setIsFullDiagram(nextState);
+    if (nextState) {
+      setSelectedHeadcodeIndices(availableHeadcodes.map((_, i) => i));
+    } else {
+      setSelectedHeadcodeIndices([]);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDiagram) return;
     
-    const headcodesToSubmit = isFullDiagram 
+    // Automatically treat it as a full diagram if all headcodes are selected
+    const allSelected = selectedHeadcodeIndices.length === availableHeadcodes.length && availableHeadcodes.length > 0;
+    const submitAsFull = isFullDiagram || allSelected;
+    
+    const headcodesToSubmit = submitAsFull 
       ? [] 
       : selectedHeadcodeIndices.map(idx => availableHeadcodes[idx]);
 
     await onAddAllocation(
       selectedDiagram,
-      isFullDiagram,
+      submitAsFull,
       headcodesToSubmit,
       notesInput
     );
@@ -413,6 +449,12 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             )}
           </div>
 
+          {children && (
+            <div className="mt-4">
+              {children}
+            </div>
+          )}
+          
           {formError && (
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-2 text-red-700 dark:text-red-400 text-sm mb-4 transition-colors">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -426,7 +468,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
               disabled={!selectedDiagram || submitting || (!isFullDiagram && selectedHeadcodeIndices.length === 0)}
               className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors shadow-sm"
             >
-              {submitting ? 'Adding...' : 'Add Allocation'}
+              {submitting ? 'Saving...' : (initialAllocation ? 'Save Changes' : 'Add Allocation')}
             </button>
           </div>
         </div>
