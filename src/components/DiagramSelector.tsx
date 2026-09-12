@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Loader2, Plus, AlertTriangle } from 'lucide-react';
+import { Allocation } from '../types';
 
 interface JobData {
   jobid: string;
@@ -15,6 +16,7 @@ interface JobData {
 interface DiagramSelectorProps {
   darkMode: boolean;
   selectedDate: Date;
+  allocations: Allocation[];
   onAddAllocation: (jobNumber: string, isFullJob: boolean, headcodes: string[], notes: string) => Promise<void>;
   formError?: string;
   submitting?: boolean;
@@ -30,7 +32,7 @@ const DEPOT_NAMES: Record<string, string> = {
   'SH': 'Shenfield'
 };
 
-export default function DiagramSelector({ darkMode, selectedDate, onAddAllocation, formError, submitting }: DiagramSelectorProps) {
+export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
   
@@ -267,11 +269,25 @@ export default function DiagramSelector({ darkMode, selectedDate, onAddAllocatio
                 required
               >
                 <option value="">-- Select Diagram --</option>
-                {availableDiagrams.map(diagram => (
-                  <option key={diagram.jobid} value={diagram.name} disabled={diagram.cancel}>
-                    {diagram.name} {diagram.cancel ? '(CANCELLED)' : diagram.isStp ? '(STP)' : '(LTP)'}
-                  </option>
-                ))}
+                {availableDiagrams.map(diagram => {
+                  const matchingAllocations = allocations.filter(a => a.jobNumber === diagram.name);
+                  const isFullyBooked = matchingAllocations.some(a => a.isFullJob);
+                  const isPartiallyBooked = !isFullyBooked && matchingAllocations.length > 0;
+                  const isDisabled = diagram.cancel || isFullyBooked;
+                  
+                  // Remove the first 2 characters (depot initials)
+                  const displayName = diagram.name.length > 2 ? diagram.name.substring(2) : diagram.name;
+                  
+                  let statusText = diagram.cancel ? '(CANCELLED)' : diagram.isStp ? '(STP)' : '(LTP)';
+                  if (isFullyBooked) statusText += ' - Fully Booked';
+                  else if (isPartiallyBooked) statusText += ' - Partially Booked';
+
+                  return (
+                    <option key={diagram.jobid} value={diagram.name} disabled={isDisabled}>
+                      {displayName} {statusText}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           )}

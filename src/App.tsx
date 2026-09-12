@@ -5,7 +5,6 @@ import Profile from './components/Profile';
 import AdminUsersPage from './components/AdminUsersPage';
 import MyCalendar from './components/MyCalendar';
 import ResetPassword from './components/ResetPassword';
-import DemoApp from './components/DemoApp';
 import FindJobs from './components/FindJobs';
 import { Loader2 } from 'lucide-react';
 import { User } from './types';
@@ -15,7 +14,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<'dashboard' | 'admin' | 'profile' | 'calendar' | 'find-jobs'>('dashboard');
   const [resetToken, setResetToken] = useState<string | null>(null);
-  const [isDemoMode, setIsDemoMode] = useState(false);
+
   const [darkMode, setDarkMode] = useState(() => {
     const saved = localStorage.getItem('darkMode');
     if (saved !== null) return saved === 'true';
@@ -57,6 +56,22 @@ export default function App() {
     }
   }, []);
 
+  const handleStartDemo = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/demo', { method: 'POST' });
+      const data = await res.json();
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        setUser(data.user);
+      }
+    } catch (err) {
+      console.error("Demo login failed", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
@@ -72,12 +87,8 @@ export default function App() {
     }} />
   }
 
-  if (isDemoMode) {
-    return <DemoApp onExit={() => setIsDemoMode(false)} darkMode={darkMode} toggleDarkMode={toggleDarkMode} />;
-  }
-
   if (!user) {
-    return <Auth onLogin={setUser} onStartDemo={() => setIsDemoMode(true)} darkMode={darkMode} toggleDarkMode={toggleDarkMode} />;
+    return <Auth onLogin={setUser} onStartDemo={handleStartDemo} darkMode={darkMode} toggleDarkMode={toggleDarkMode} />;
   }
 
   const handleLogout = () => {

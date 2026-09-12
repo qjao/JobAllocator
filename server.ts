@@ -25,41 +25,48 @@ if (!fs.existsSync(dataDir)) {
 const db = new Database(path.join(dataDir, 'database.sqlite'));
 db.pragma('journal_mode = WAL');
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    email TEXT UNIQUE,
-    password TEXT,
-    name TEXT,
-    role TEXT DEFAULT 'instructor',
-    isApproved INTEGER DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS allocations (
-    id TEXT PRIMARY KEY,
-    date TEXT,
-    instructorId TEXT,
-    instructorName TEXT,
-    jobNumber TEXT,
-    isFullJob INTEGER,
-    headcodes TEXT,
-    notes TEXT,
-    createdAt INTEGER,
-    updatedAt INTEGER
-  );
-  CREATE TABLE IF NOT EXISTS api_requests (
-    id TEXT PRIMARY KEY,
-    timestamp INTEGER,
-    userId TEXT
-  );
-`);
+const demoDb = new Database(':memory:');
 
-// Migration for existing users
-try {
-  db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'instructor'");
-  db.exec("ALTER TABLE users ADD COLUMN isApproved INTEGER DEFAULT 0");
-} catch (e) {
-  // Columns likely already exist
+function initDb(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE,
+      password TEXT,
+      name TEXT,
+      role TEXT DEFAULT 'instructor',
+      isApproved INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS allocations (
+      id TEXT PRIMARY KEY,
+      date TEXT,
+      instructorId TEXT,
+      instructorName TEXT,
+      jobNumber TEXT,
+      isFullJob INTEGER,
+      headcodes TEXT,
+      notes TEXT,
+      createdAt INTEGER,
+      updatedAt INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS api_requests (
+      id TEXT PRIMARY KEY,
+      timestamp INTEGER,
+      userId TEXT
+    );
+  `);
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'instructor'");
+    database.exec("ALTER TABLE users ADD COLUMN isApproved INTEGER DEFAULT 0");
+  } catch (e) {
+  }
 }
+
+initDb(db);
+initDb(demoDb);
+
+const getDb = (req) => (req && req.user && req.user.isDemo) ? demoDb : db;
+
 // Auto-approve existing users and set admin
 // db.exec("UPDATE users SET isApproved = 1 WHERE isApproved = 0");
 // db.exec("UPDATE users SET role = 'admin' WHERE email = 'joao.segatti@gmail.com'");
@@ -130,7 +137,7 @@ async function startServer() {
         isApproved = 1;
       }
 
-      const stmt = db.prepare('INSERT INTO users (id, email, password, name, role, isApproved) VALUES (?, ?, ?, ?, ?, ?)');
+      const stmt = getDb(req).prepare('INSERT INTO users (id, email, password, name, role, isApproved) VALUES (?, ?, ?, ?, ?, ?)');
       stmt.run(id, email, hashedPassword, name, role, isApproved);
       
       if (!isApproved) {
@@ -149,10 +156,34 @@ async function startServer() {
   });
 
   // Auth: Login
+  app.post('/api/auth/demo', (req, res) => {
+    const id = uuidv4();
+    const name = `Demo User ${id.substring(0,4)}`;
+    const email = `demo-${id}@example.com`;
+    demoDb.prepare('INSERT INTO users (id, email, password, name, role, isApproved) VALUES (?, ?, ?, ?, ?, ?)').run(id, email, '', name, 'admin', 1);
+    
+    // Create some initial allocations for demo users
+    const today = new Date('2026-09-12T12:00:00Z');
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    
+    // Seed only if empty (prevent flooding)
+    const count = demoDb.prepare('SELECT count(*) as c FROM allocations').get() as { c: number };
+    if (count.c === 0) {
+      demoDb.prepare('INSERT INTO allocations (id, date, instructorId, instructorName, jobNumber, isFullJob, headcodes, notes, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+        'demo-alloc-1', dateStr, id, name, 'AW2101', 1, '[]', 'Welcome to demo mode!', Date.now(), Date.now()
+      );
+    }
+    
+    const token = jwt.sign({ id, email, name, role: 'admin', isApproved: true, isDemo: true }, JWT_SECRET);
+    res.json({ token, user: { id, email, name, role: 'admin', isApproved: true, isDemo: true } });
+  });
+
+  
+
   app.post('/api/auth/login', (req, res) => {
     try {
       const { email, password } = req.body;
-      const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+      const user = getDb(req).prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
       
       if (!user || !bcrypt.compareSync(password, user.password)) {
         return res.status(401).json({ error: 'Invalid email or password' });
@@ -172,7 +203,7 @@ async function startServer() {
 
   // Auth: Me
   app.get('/api/auth/me', authenticateToken, (req: any, res) => {
-    const user = db.prepare('SELECT id, email, name, role, isApproved FROM users WHERE id = ?').get(req.user.id) as any;
+    const user = getDb(req).prepare('SELECT id, email, name, role, isApproved FROM users WHERE id = ?').get(req.user.id) as any;
     if (!user || !user.isApproved) return res.status(401).json({ error: 'Account not approved' });
     res.json({ user: { ...user, isApproved: Boolean(user.isApproved) } });
   });
@@ -181,12 +212,12 @@ async function startServer() {
   app.put('/api/users/me', authenticateToken, (req: any, res) => {
     const { name, email } = req.body;
     try {
-      db.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name, email, req.user.id);
+      getDb(req).prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name, email, req.user.id);
       
       // Update instructorName in allocations as well
-      db.prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(name, req.user.id);
+      getDb(req).prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(name, req.user.id);
 
-      const updatedUser = db.prepare('SELECT id, email, name, role, isApproved FROM users WHERE id = ?').get(req.user.id) as any;
+      const updatedUser = getDb(req).prepare('SELECT id, email, name, role, isApproved FROM users WHERE id = ?').get(req.user.id) as any;
       const token = jwt.sign({ id: updatedUser.id, email: updatedUser.email, name: updatedUser.name, role: updatedUser.role, isApproved: Boolean(updatedUser.isApproved) }, JWT_SECRET);
       
       res.json({ success: true, user: { ...updatedUser, isApproved: Boolean(updatedUser.isApproved) }, token });
@@ -202,20 +233,20 @@ async function startServer() {
   // User: Change Password
   app.put('/api/users/me/password', authenticateToken, (req: any, res) => {
     const { currentPassword, newPassword } = req.body;
-    const user = db.prepare('SELECT password FROM users WHERE id = ?').get(req.user.id) as any;
+    const user = getDb(req).prepare('SELECT password FROM users WHERE id = ?').get(req.user.id) as any;
     
     if (!bcrypt.compareSync(currentPassword, user.password)) {
       return res.status(400).json({ error: 'Incorrect current password' });
     }
     
     const hashedPassword = bcrypt.hashSync(newPassword, 10);
-    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, req.user.id);
+    getDb(req).prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, req.user.id);
     res.json({ success: true });
   });
 
   // Admin: Users Management
   app.get('/api/admin/users', authenticateToken, requireAdminOrModerator, (req, res) => {
-    const users = db.prepare('SELECT id, email, name, role, isApproved FROM users ORDER BY name ASC').all() as any[];
+    const users = getDb(req).prepare('SELECT id, email, name, role, isApproved FROM users ORDER BY name ASC').all() as any[];
     
     const now = Date.now();
     const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -223,7 +254,7 @@ async function startServer() {
     const oneDayAgo = now - 24 * ONE_HOUR_MS;
     const oneMonthAgo = now - 30 * 24 * ONE_HOUR_MS;
 
-    const stats = db.prepare(`
+    const stats = getDb(req).prepare(`
       SELECT userId, 
              SUM(CASE WHEN timestamp > ? THEN 1 ELSE 0 END) as countHour,
              SUM(CASE WHEN timestamp > ? THEN 1 ELSE 0 END) as countDay,
@@ -249,15 +280,15 @@ async function startServer() {
     const { name, email, role, isApproved } = req.body;
     try {
       if (req.user.role === 'moderator') {
-        const targetUser = db.prepare('SELECT role FROM users WHERE id = ?').get(req.params.id) as any;
+        const targetUser = getDb(req).prepare('SELECT role FROM users WHERE id = ?').get(req.params.id) as any;
         if (!targetUser) return res.status(404).json({ error: 'User not found' });
         if (targetUser.role === 'admin' || targetUser.role === 'moderator') {
           return res.status(403).json({ error: 'Moderators cannot modify admins or other moderators' });
         }
-        db.prepare('UPDATE users SET isApproved = ? WHERE id = ?')
+        getDb(req).prepare('UPDATE users SET isApproved = ? WHERE id = ?')
           .run(isApproved ? 1 : 0, req.params.id);
       } else {
-        db.prepare('UPDATE users SET name = ?, email = ?, role = ?, isApproved = ? WHERE id = ?')
+        getDb(req).prepare('UPDATE users SET name = ?, email = ?, role = ?, isApproved = ? WHERE id = ?')
           .run(name, email, role, isApproved ? 1 : 0, req.params.id);
       }
       res.json({ success: true });
@@ -269,13 +300,13 @@ async function startServer() {
   app.put('/api/admin/users/:id/password', authenticateToken, requireAdmin, (req, res) => {
     const { password } = req.body;
     const hashedPassword = bcrypt.hashSync(password, 10);
-    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, req.params.id);
+    getDb(req).prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, req.params.id);
     res.json({ success: true });
   });
 
   // Admin: Generate Reset Token
   app.post('/api/admin/users/:id/reset-token', authenticateToken, requireAdmin, (req, res) => {
-    const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id) as any;
+    const targetUser = getDb(req).prepare('SELECT id FROM users WHERE id = ?').get(req.params.id) as any;
     if (!targetUser) return res.status(404).json({ error: 'User not found' });
     
     // Create a 24-hour token for password reset
@@ -293,7 +324,7 @@ async function startServer() {
       }
 
       const hashedPassword = bcrypt.hashSync(newPassword, 10);
-      db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, decoded.userId);
+      getDb(req).prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, decoded.userId);
       res.json({ success: true });
     } catch (err) {
       return res.status(400).json({ error: 'Invalid or expired reset token' });
@@ -301,7 +332,7 @@ async function startServer() {
   });
 
   app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
-    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+    getDb(req).prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
     res.json({ success: true });
   });
 
@@ -311,11 +342,11 @@ async function startServer() {
     let allocations;
     
     if (startDate && endDate) {
-      allocations = db.prepare('SELECT * FROM allocations WHERE date >= ? AND date <= ? ORDER BY date ASC, createdAt ASC').all(startDate, endDate) as any[];
+      allocations = getDb(req).prepare('SELECT * FROM allocations WHERE date >= ? AND date <= ? ORDER BY date ASC, createdAt ASC').all(startDate, endDate) as any[];
     } else if (date) {
-      allocations = db.prepare('SELECT * FROM allocations WHERE date = ? ORDER BY createdAt ASC').all(date) as any[];
+      allocations = getDb(req).prepare('SELECT * FROM allocations WHERE date = ? ORDER BY createdAt ASC').all(date) as any[];
     } else {
-      allocations = db.prepare('SELECT * FROM allocations ORDER BY date ASC, createdAt ASC').all() as any[];
+      allocations = getDb(req).prepare('SELECT * FROM allocations ORDER BY date ASC, createdAt ASC').all() as any[];
     }
     
     const parsed = allocations.map(a => ({
@@ -329,7 +360,7 @@ async function startServer() {
 
   // Allocations: Get all for current user
   app.get('/api/allocations/me', authenticateToken, (req: any, res) => {
-    const allocations = db.prepare('SELECT * FROM allocations WHERE instructorId = ? ORDER BY date ASC, createdAt ASC').all(req.user.id) as any[];
+    const allocations = getDb(req).prepare('SELECT * FROM allocations WHERE instructorId = ? ORDER BY date ASC, createdAt ASC').all(req.user.id) as any[];
     
     const parsed = allocations.map(a => ({
       ...a,
@@ -346,7 +377,7 @@ async function startServer() {
     const id = uuidv4();
     const now = Date.now();
     
-    const stmt = db.prepare(`
+    const stmt = getDb(req).prepare(`
       INSERT INTO allocations (id, date, instructorId, instructorName, jobNumber, isFullJob, headcodes, notes, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
@@ -362,7 +393,7 @@ async function startServer() {
       createdAt: now
     };
     
-    io.emit('allocation_added', newAlloc);
+    io.to((req && req.user && req.user.isDemo) ? 'demo' : 'real').emit('allocation_added', newAlloc);
     res.json(newAlloc);
   });
 
@@ -372,7 +403,7 @@ async function startServer() {
     const { jobNumber, isFullJob, headcodes, notes, instructorId } = req.body;
     const now = Date.now();
     
-    const existing = db.prepare('SELECT instructorId, instructorName FROM allocations WHERE id = ?').get(id) as any;
+    const existing = getDb(req).prepare('SELECT instructorId, instructorName FROM allocations WHERE id = ?').get(id) as any;
     if (!existing) return res.status(404).json({ error: 'Not found' });
     if (existing.instructorId !== req.user.id && req.user.role !== 'admin' && req.user.role !== 'moderator') return res.status(401).json({ error: 'Forbidden' });
 
@@ -380,14 +411,14 @@ async function startServer() {
     let finalInstructorName = existing.instructorName;
 
     if ((req.user.role === 'admin' || req.user.role === 'moderator') && instructorId && instructorId !== existing.instructorId) {
-      const newUser = db.prepare('SELECT id, name FROM users WHERE id = ?').get(instructorId) as any;
+      const newUser = getDb(req).prepare('SELECT id, name FROM users WHERE id = ?').get(instructorId) as any;
       if (newUser) {
         finalInstructorId = newUser.id;
         finalInstructorName = newUser.name;
       }
     }
 
-    const stmt = db.prepare(`
+    const stmt = getDb(req).prepare(`
       UPDATE allocations 
       SET jobNumber = ?, isFullJob = ?, headcodes = ?, notes = ?, updatedAt = ?, instructorId = ?, instructorName = ?
       WHERE id = ?
@@ -395,11 +426,11 @@ async function startServer() {
     
     stmt.run(jobNumber, isFullJob ? 1 : 0, JSON.stringify(headcodes || []), notes || '', now, finalInstructorId, finalInstructorName, id);
     
-    const updatedAlloc = db.prepare('SELECT * FROM allocations WHERE id = ?').get(id) as any;
+    const updatedAlloc = getDb(req).prepare('SELECT * FROM allocations WHERE id = ?').get(id) as any;
     updatedAlloc.isFullJob = Boolean(updatedAlloc.isFullJob);
     updatedAlloc.headcodes = JSON.parse(updatedAlloc.headcodes);
     
-    io.emit('allocation_updated', updatedAlloc);
+    io.to((req && req.user && req.user.isDemo) ? 'demo' : 'real').emit('allocation_updated', updatedAlloc);
     res.json(updatedAlloc);
   });
 
@@ -407,13 +438,13 @@ async function startServer() {
   app.delete('/api/allocations/:id', authenticateToken, (req: any, res) => {
     const { id } = req.params;
     
-    const existing = db.prepare('SELECT instructorId FROM allocations WHERE id = ?').get(id) as any;
+    const existing = getDb(req).prepare('SELECT instructorId FROM allocations WHERE id = ?').get(id) as any;
     if (!existing) return res.status(404).json({ error: 'Not found' });
     if (existing.instructorId !== req.user.id && req.user.role !== 'admin' && req.user.role !== 'moderator') return res.status(401).json({ error: 'Forbidden' });
 
-    db.prepare('DELETE FROM allocations WHERE id = ?').run(id);
+    getDb(req).prepare('DELETE FROM allocations WHERE id = ?').run(id);
     
-    io.emit('allocation_deleted', { id });
+    io.to((req && req.user && req.user.isDemo) ? 'demo' : 'real').emit('allocation_deleted', { id });
     res.json({ success: true });
   });
 
@@ -516,25 +547,25 @@ async function startServer() {
   const MAX_REQUESTS_PER_HOUR = 4500;
   const ONE_HOUR_MS = 60 * 60 * 1000;
 
-  function checkRateLimit() {
+  function checkRateLimit(req: any) {
     const now = Date.now();
     const oneHourAgo = now - ONE_HOUR_MS;
-    const stmt = db.prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
+    const stmt = getDb(req).prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
     const { count } = stmt.get(oneHourAgo) as { count: number };
     if (count >= MAX_REQUESTS_PER_HOUR) {
       throw new Error('Global API rate limit exceeded (4500 requests per hour). Please try again later.');
     }
   }
 
-  function recordApiRequest(userId: string) {
-    const stmt = db.prepare('INSERT INTO api_requests (id, timestamp, userId) VALUES (?, ?, ?)');
+  function recordApiRequest(req: any, userId: string) {
+    const stmt = getDb(req).prepare('INSERT INTO api_requests (id, timestamp, userId) VALUES (?, ?, ?)');
     stmt.run(uuidv4(), Date.now(), userId);
   }
 
-  function getRateLimitStats() {
+  function getRateLimitStats(req: any) {
     const now = Date.now();
     const oneHourAgo = now - ONE_HOUR_MS;
-    const stmt = db.prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
+    const stmt = getDb(req).prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
     const { count } = stmt.get(oneHourAgo) as { count: number };
     return {
       used: count,
@@ -593,8 +624,8 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
     }
 
     const fetchBoard = async (timeVal: string) => {
-      checkRateLimit();
-      recordApiRequest((req as any).user.id);
+      checkRateLimit(req);
+      recordApiRequest(req, (req as any).user.id);
       const timeElement = timeVal ? `<ldb:time>${timeVal}</ldb:time>` : `<ldb:time>${new Date().toISOString().substring(0, 19)}</ldb:time>`;
       
       let requestName = '';
@@ -864,7 +895,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
               start: String(allServicesSorted[0].std || '').substring(11, 16),
               end: String(allServicesSorted[allServicesSorted.length - 1].std || '').substring(11, 16)
             } : null,
-            rateLimit: getRateLimitStats()
+            rateLimit: getRateLimitStats(req)
           }
         } 
       };
@@ -895,20 +926,20 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
     const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
     
     // Get last 30 days data
-    const last30DaysData = db.prepare(`
+    const last30DaysData = getDb(req).prepare(`
       SELECT timestamp, userId 
       FROM api_requests 
       WHERE timestamp > ?
     `).all(thirtyDaysAgo) as { timestamp: number, userId: string }[];
 
     // Get user details
-    const users = db.prepare('SELECT id, name FROM users').all() as { id: string, name: string }[];
+    const users = getDb(req).prepare('SELECT id, name FROM users').all() as { id: string, name: string }[];
     const userMap = new Map(users.map(u => [u.id, u.name]));
 
     res.json({
       requests: last30DaysData,
       users: Object.fromEntries(userMap),
-      currentRateLimit: getRateLimitStats()
+      currentRateLimit: getRateLimitStats(req)
     });
   });
 
@@ -927,6 +958,22 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+
+  io.on('connection', (socket) => {
+    const token = socket.handshake.auth?.token;
+    if (token) {
+      jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (!err && user) {
+          if (user.isDemo) {
+            socket.join('demo');
+          } else {
+            socket.join('real');
+          }
+        }
+      });
+    }
+  });
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);

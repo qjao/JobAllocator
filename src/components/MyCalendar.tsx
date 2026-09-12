@@ -94,7 +94,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
     fetchAllocations();
     fetchUsers();
 
-    const socket = io();
+    const socket = io({ auth: { token: localStorage.getItem('token') } });
 
     socket.on('allocation_added', (alloc: Allocation) => {
       if (alloc.date >= startDateStr && alloc.date <= endDateStr) {

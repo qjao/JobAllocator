@@ -96,7 +96,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
     fetchAllocations();
     fetchUsers();
 
-    const socket = io();
+    const socket = io({ auth: { token: localStorage.getItem('token') } });
 
     socket.on('allocation_added', (alloc: Allocation) => {
       if (alloc.date === dateStr) {
@@ -397,6 +397,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
             <DiagramSelector 
               darkMode={darkMode}
               selectedDate={selectedDate}
+              allocations={allocations}
               onAddAllocation={handleAddAllocation}
               formError={formError}
               submitting={submitting}
