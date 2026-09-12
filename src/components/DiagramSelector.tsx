@@ -147,6 +147,26 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   }, [selectedDepot, jobs, selectedDate]);
 
   // Handle diagram selection change without clearing headcodes if same diagram
+  const claimedHeadcodes = React.useMemo(() => {
+    if (!selectedDiagram) return new Set<string>();
+    const matching = allocations.filter(a => a.jobNumber === selectedDiagram);
+    const claimed = new Set<string>();
+    matching.forEach(a => {
+      if (!a.isFullJob && Array.isArray(a.headcodes)) {
+        a.headcodes.forEach(hc => claimed.add(hc));
+      }
+    });
+    return claimed;
+  }, [selectedDiagram, allocations]);
+
+  const isPartiallyBooked = claimedHeadcodes.size > 0;
+
+  useEffect(() => {
+    if (isPartiallyBooked && isFullDiagram) {
+      setIsFullDiagram(false);
+    }
+  }, [isPartiallyBooked, isFullDiagram]);
+
   useEffect(() => {
     if (selectedDiagram) {
       const job = availableDiagrams.find(j => j.name === selectedDiagram);
@@ -164,15 +184,14 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
     }
   }, [selectedDiagram, jobs, headcodesMap]);
 
-  // Effect to keep selected headcodes in sync when isFullDiagram changes
   useEffect(() => {
-    if (isFullDiagram && availableHeadcodes.length > 0) {
+    if (isFullDiagram && availableHeadcodes.length > 0 && !isPartiallyBooked) {
       setSelectedHeadcodeIndices(availableHeadcodes.map((_, i) => i));
     } else if (!isFullDiagram && availableHeadcodes.length > 0 && selectedHeadcodeIndices.length === availableHeadcodes.length) {
       // If it was full, but user unchecks full diagram natively (not by clicking a child)
       setSelectedHeadcodeIndices([]);
     }
-  }, [isFullDiagram, availableHeadcodes]);
+  }, [isFullDiagram, availableHeadcodes, isPartiallyBooked]);
 
   const handleHeadcodeToggle = (idx: number) => {
     if (isFullDiagram) {
@@ -300,28 +319,35 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             </label>
             
             <div className="flex flex-col gap-4">
-              <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors -ml-2">
+              <label className={`flex items-center space-x-3 p-2 rounded-lg transition-colors -ml-2 ${isPartiallyBooked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30'}`}>
                 <input
                   type="checkbox"
                   checked={isFullDiagram}
+                  disabled={isPartiallyBooked}
                   onChange={handleFullDiagramToggle}
-                  className="w-5 h-5 rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800"
+                  className="w-5 h-5 rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800 disabled:opacity-50"
                 />
-                <span className="text-slate-900 dark:text-white font-medium">Claim Full Diagram</span>
+                <span className="text-slate-900 dark:text-white font-medium">Claim Full Diagram {isPartiallyBooked && '(Unavailable - Partially Booked)'}</span>
               </label>
               
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mt-1">
-                {availableHeadcodes.map((hc, idx) => (
-                  <label key={`${hc}-${idx}`} className="flex items-center space-x-3 cursor-pointer bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-700 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={!isFullDiagram && selectedHeadcodeIndices.includes(idx)}
-                      onChange={() => handleHeadcodeToggle(idx)}
-                      className="w-4 h-4 rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800"
-                    />
-                    <span className="text-slate-700 dark:text-slate-300 text-sm font-mono tracking-wide">{hc}</span>
-                  </label>
-                ))}
+                {availableHeadcodes.map((hc, idx) => {
+                  const isClaimed = claimedHeadcodes.has(hc);
+                  return (
+                    <label key={`${hc}-${idx}`} className={`flex items-center space-x-3 p-2.5 rounded-lg border transition-colors ${isClaimed ? 'bg-slate-100 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 opacity-60 cursor-not-allowed' : 'cursor-pointer bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-700'}`}>
+                      <input
+                        type="checkbox"
+                        checked={(!isFullDiagram && selectedHeadcodeIndices.includes(idx)) || isClaimed}
+                        disabled={isClaimed}
+                        onChange={() => !isClaimed && handleHeadcodeToggle(idx)}
+                        className="w-4 h-4 rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800 disabled:opacity-50"
+                      />
+                      <span className="text-slate-700 dark:text-slate-300 text-sm font-mono tracking-wide">
+                        {hc} {isClaimed && <span className="text-xs text-slate-500 dark:text-slate-400 font-sans ml-1">(Claimed)</span>}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
             </div>
           </div>
