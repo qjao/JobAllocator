@@ -245,77 +245,10 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
 
   const openEditModal = (alloc: Allocation) => {
     setEditingAllocation(alloc);
-    setEditJobNumber(alloc.jobNumber);
-    setEditIsFullJob(alloc.isFullJob);
-    setEditHeadcodesInput(alloc.headcodes ? alloc.headcodes.join(', ') : '');
-    setEditNotesInput(alloc.notes || '');
     setEditInstructorId(alloc.instructorId);
-    setShowEditNotes(!!alloc.notes);
     setEditFormError('');
   };
 
-  const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingAllocation) return;
-    setEditFormError('');
-
-    const job = editJobNumber.trim().toUpperCase();
-    const jobError = validateJobNumber(job, editingAllocation.date);
-    if (jobError) {
-      setEditFormError(jobError);
-      return;
-    }
-
-    let parsedHeadcodes: string[] = [];
-    if (!editIsFullJob) {
-      parsedHeadcodes = editHeadcodesInput.split(',').map(h => h.trim().toUpperCase()).filter(h => h);
-      if (parsedHeadcodes.length === 0) {
-        setEditFormError('Please enter at least one headcode for a partial job.');
-        return;
-      }
-      for (const hc of parsedHeadcodes) {
-        if (!validateHeadcode(hc)) {
-          setEditFormError(`Invalid headcode format: ${hc}. Must be XLXX (e.g., 1A23).`);
-          return;
-        }
-      }
-    }
-
-    const conflicts = checkConflicts(job, editIsFullJob, parsedHeadcodes, editingAllocation.date, editingAllocation.id);
-    if (conflicts.length > 0) {
-      setEditFormError(conflicts[0].message);
-      return;
-    }
-
-    setEditSubmitting(true);
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/allocations/${editingAllocation.id}`, {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          jobNumber: job,
-          isFullJob: editIsFullJob,
-          headcodes: editIsFullJob ? [] : parsedHeadcodes,
-          notes: editNotesInput.trim(),
-          instructorId: (user.role === 'admin' || user.role === 'moderator') ? editInstructorId : undefined
-        })
-      });
-
-      if (!res.ok) throw new Error('Failed to update allocation');
-
-      setEditingAllocation(null);
-      setSelectedAllocation(null);
-    } catch (error) {
-      console.error("Error updating allocation:", error);
-      setEditFormError('Failed to update allocation. Check permissions.');
-    } finally {
-      setEditSubmitting(false);
-    }
-  };
 
   const confirmDelete = async (id: string) => {
     try {
@@ -748,21 +681,59 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
       )}
 
       {editingAllocation && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto transition-colors">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
-              <Pencil className="w-5 h-5 text-blue-500 dark:text-blue-400" />
-              Edit Allocation
-            </h3>
-            
-            <form onSubmit={handleEditSubmit} className="space-y-4">
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 overflow-y-auto">
+          <div className="max-w-md w-full my-8 relative">
+            <DiagramSelector
+              darkMode={darkMode}
+              selectedDate={new Date(editingAllocation.date)}
+              allocations={allocations.filter(a => a.id !== editingAllocation.id)}
+              onAddAllocation={async (job, isFull, hcs, notes) => {
+                setEditSubmitting(true);
+                try {
+                  const token = localStorage.getItem('token');
+                  const res = await fetch(`/api/allocations/${editingAllocation.id}`, {
+                    method: 'PUT',
+                    headers: { 
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                      jobNumber: job,
+                      isFullJob: isFull,
+                      headcodes: isFull ? [] : hcs,
+                      notes: notes.trim(),
+                      instructorId: (user.role === 'admin' || user.role === 'moderator') ? editInstructorId : undefined
+                    })
+                  });
+                  if (!res.ok) throw new Error('Failed to update allocation');
+                  setEditingAllocation(null);
+                  setSelectedAllocation(null);
+                  
+                } catch (error) {
+                  console.error("Error updating allocation:", error);
+                  setEditFormError('Failed to update allocation. Check permissions.');
+                } finally {
+                  setEditSubmitting(false);
+                }
+              }}
+              formError={editFormError}
+              submitting={editSubmitting}
+              onCancel={() => { setEditingAllocation(null); setSelectedAllocation(null); }}
+              title="Edit Allocation"
+              initialAllocation={{
+                jobNumber: editingAllocation.jobNumber,
+                isFullJob: editingAllocation.isFullJob,
+                headcodes: editingAllocation.headcodes,
+                notes: editingAllocation.notes
+              }}
+            >
               {(user.role === 'admin' || user.role === 'moderator') && (
-                <div>
+                <div className="mb-4">
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Allocated User</label>
                   <select
                     value={editInstructorId}
                     onChange={(e) => setEditInstructorId(e.target.value)}
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors"
                     required
                   >
                     {users.map(u => (
@@ -771,89 +742,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                   </select>
                 </div>
               )}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Job Number</label>
-                <input
-                  type="text"
-                  value={editJobNumber}
-                  onChange={(e) => setEditJobNumber(e.target.value.toUpperCase())}
-                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 uppercase transition-colors"
-                  maxLength={6}
-                  required
-                />
-              </div>
-
-              <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg border border-slate-200 dark:border-slate-600 transition-colors">
-                <input
-                  type="checkbox"
-                  id="editFullJob"
-                  checked={editIsFullJob}
-                  onChange={(e) => setEditIsFullJob(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 dark:text-blue-500 rounded border-slate-300 dark:border-slate-500 focus:ring-blue-500 bg-white dark:bg-slate-800"
-                />
-                <label htmlFor="editFullJob" className="text-sm font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
-                  Claim Full Job
-                </label>
-              </div>
-
-              {!editIsFullJob && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Headcodes</label>
-                  <input
-                    type="text"
-                    value={editHeadcodesInput}
-                    onChange={(e) => setEditHeadcodesInput(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 uppercase transition-colors"
-                    required={!editIsFullJob}
-                  />
-                </div>
-              )}
-
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowEditNotes(!showEditNotes)}
-                  className="flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors mb-1"
-                >
-                  Instructor Notes (Optional)
-                  <span className="text-blue-500 dark:text-blue-400 font-bold text-lg leading-none">{showEditNotes ? '-' : '+'}</span>
-                </button>
-                {showEditNotes && (
-                  <div className="animate-in fade-in slide-in-from-top-2 duration-200">
-                    <textarea
-                      value={editNotesInput}
-                      onChange={(e) => setEditNotesInput(e.target.value)}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 min-h-[80px] resize-y transition-colors"
-                      maxLength={500}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {editFormError && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-2 text-red-700 dark:text-red-400 text-sm transition-colors">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <p>{editFormError}</p>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-3 pt-2">
-                <button 
-                  type="button"
-                  onClick={() => setEditingAllocation(null)}
-                  className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg font-medium transition-colors text-sm"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  disabled={editSubmitting}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm"
-                >
-                  {editSubmitting ? 'Saving...' : 'Save Changes'}
-                </button>
-              </div>
-            </form>
+            </DiagramSelector>
           </div>
         </div>
       )}
