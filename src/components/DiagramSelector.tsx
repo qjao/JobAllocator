@@ -112,7 +112,9 @@ export default function DiagramSelector({ darkMode, selectedDate, onAddAllocatio
         if (!j.name.startsWith(selectedDepot)) return false;
         
         if (j.from && j.to) {
-          if (selectedDateStr < j.from || selectedDateStr > j.to) {
+          const fromDate = j.from.trim();
+          const toDate = j.to.trim();
+          if (selectedDateStr < fromDate || selectedDateStr > toDate) {
             return false;
           }
         }

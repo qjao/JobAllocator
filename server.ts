@@ -427,7 +427,16 @@ async function startServer() {
         return lines.slice(1).filter(l => l.trim()).map(line => {
           const values = line.split(',');
           const obj: any = {};
-          headers.forEach((h, i) => obj[h] = values[i]);
+          headers.forEach((h, i) => {
+            let val = values[i];
+            if (val) {
+              val = val.trim();
+              if (val.startsWith('"') && val.endsWith('"')) {
+                val = val.substring(1, val.length - 1);
+              }
+            }
+            obj[h] = val;
+          });
           return obj;
         });
       };
