@@ -439,7 +439,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
         </div>
       </Header>
 
-      <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
+      <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Left Column: Form */}
           <div className="lg:col-span-1">

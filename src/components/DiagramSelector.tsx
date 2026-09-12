@@ -372,12 +372,9 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                         onChange={() => !isClaimed && handleHeadcodeToggle(idx)}
                         className="w-4 h-4 shrink-0 rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800 disabled:opacity-50"
                       />
-                      <div className="flex flex-wrap items-baseline gap-x-1 min-w-0">
-                        <span className="text-slate-700 dark:text-slate-300 text-sm font-mono tracking-wide truncate">
-                          {hc}
-                        </span>
-                        {isClaimed && <span className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 font-sans font-normal truncate">(Claimed)</span>}
-                      </div>
+                      <span className={`text-sm font-mono tracking-wide truncate ${isClaimed ? 'text-slate-500 dark:text-slate-500 line-through' : 'text-slate-700 dark:text-slate-300'}`}>
+                        {hc}
+                      </span>
                     </label>
                   );
                 })}
