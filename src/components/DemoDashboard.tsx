@@ -454,8 +454,8 @@ export default function DemoDashboard({ onNavigate, onExit, darkMode, toggleDark
 
                         {!alloc.isFullJob && alloc.headcodes.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
-                            {alloc.headcodes.map(hc => (
-                              <span key={hc} className="bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-mono text-xs px-2 py-1 rounded-md transition-colors">
+                            {alloc.headcodes.map((hc, idx) => (
+                              <span key={`${hc}-${idx}`} className="bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-mono text-xs px-2 py-1 rounded-md transition-colors">
                                 {hc}
                               </span>
                             ))}

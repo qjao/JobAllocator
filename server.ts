@@ -457,7 +457,8 @@ async function startServer() {
         daycode: row.daycode,
         isStp: true,
         from: row.from,
-        to: row.to
+        to: row.to,
+        cancel: row.cancel === '1'
       }));
 
       const hm: Record<string, string[]> = {};

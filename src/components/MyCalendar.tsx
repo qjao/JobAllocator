@@ -548,9 +548,9 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                                 </span>
                               ) : (
                                 <div className="flex flex-wrap gap-1 items-center min-w-0">
-                                  {alloc.headcodes.map(hc => (
+                                  {alloc.headcodes.map((hc, idx) => (
                                     <a
-                                      key={hc}
+                                      key={`${hc}-${idx}`}
                                       href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${alloc.date}&headcode=${hc}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
@@ -626,9 +626,9 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                 <div>
                   <span className="font-semibold text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider block mb-2">Headcodes</span>
                   <div className="flex flex-wrap gap-1.5">
-                    {selectedAllocation.headcodes.map(hc => (
+                    {selectedAllocation.headcodes.map((hc, idx) => (
                       <a 
-                        key={hc} 
+                        key={`${hc}-${idx}`} 
                         href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${selectedAllocation.date}&headcode=${hc}`}
                         target="_blank"
                         rel="noopener noreferrer"

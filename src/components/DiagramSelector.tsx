@@ -9,6 +9,7 @@ interface JobData {
   isStp: boolean;
   from?: string;
   to?: string;
+  cancel?: boolean;
 }
 
 interface DiagramSelectorProps {
@@ -100,6 +101,8 @@ export default function DiagramSelector({ darkMode, selectedDate, onAddAllocatio
         expectedDayCodes = ['3', '6'];
       }
       
+      const selectedDateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+
       const exceptionSuffixes: Record<string, string[]> = {
         'GP': ['001'],
         'IF': ['002']
@@ -107,6 +110,12 @@ export default function DiagramSelector({ darkMode, selectedDate, onAddAllocatio
 
       const filtered = jobs.filter(j => {
         if (!j.name.startsWith(selectedDepot)) return false;
+        
+        if (j.from && j.to) {
+          if (selectedDateStr < j.from || selectedDateStr > j.to) {
+            return false;
+          }
+        }
         
         const depotCode = j.name.substring(0, 2);
         const dayCode = j.name.substring(2, 3);
@@ -119,7 +128,14 @@ export default function DiagramSelector({ darkMode, selectedDate, onAddAllocatio
         return expectedDayCodes.includes(dayCode);
       });
 
-      setAvailableDiagrams(filtered);
+      const dedupedMap = new Map<string, JobData>();
+      filtered.forEach(j => {
+        if (!dedupedMap.has(j.name) || j.isStp) {
+          dedupedMap.set(j.name, j);
+        }
+      });
+      
+      setAvailableDiagrams(Array.from(dedupedMap.values()));
       setSelectedDiagram('');
       setAvailableHeadcodes([]);
       setSelectedHeadcodeIndices([]);
@@ -250,8 +266,8 @@ export default function DiagramSelector({ darkMode, selectedDate, onAddAllocatio
               >
                 <option value="">-- Select Diagram --</option>
                 {availableDiagrams.map(diagram => (
-                  <option key={diagram.jobid} value={diagram.name}>
-                    {diagram.name} {diagram.isStp ? '(STP)' : '(LTP)'}
+                  <option key={diagram.jobid} value={diagram.name} disabled={diagram.cancel}>
+                    {diagram.name} {diagram.cancel ? '(CANCELLED)' : diagram.isStp ? '(STP)' : '(LTP)'}
                   </option>
                 ))}
               </select>
