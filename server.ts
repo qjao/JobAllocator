@@ -417,6 +417,101 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Diagrams API: serve diagrams from data directory
+  app.get('/api/diagrams', authenticateToken, (req, res) => {
+    try {
+      const parseCsv = (content: string) => {
+        const lines = content.split('\n');
+        if (lines.length === 0) return [];
+        const headers = lines[0].split(',').map(h => h.trim());
+        return lines.slice(1).filter(l => l.trim()).map(line => {
+          const values = line.split(',');
+          const obj: any = {};
+          headers.forEach((h, i) => obj[h] = values[i]);
+          return obj;
+        });
+      };
+
+      const ltpPath = path.join(process.cwd(), 'data', 'r_jobs.csv');
+      const stpPath = path.join(process.cwd(), 'data', 'r_jobs_stp.csv');
+      const hcPath = path.join(process.cwd(), 'data', 'r_jobs_headcodes.csv');
+
+      const ltpRes = fs.existsSync(ltpPath) ? fs.readFileSync(ltpPath, 'utf8') : '';
+      const stpRes = fs.existsSync(stpPath) ? fs.readFileSync(stpPath, 'utf8') : '';
+      const hcRes = fs.existsSync(hcPath) ? fs.readFileSync(hcPath, 'utf8') : '';
+
+      const ltpData = parseCsv(ltpRes).map((row: any) => ({
+        jobid: row.jobid,
+        name: row.name,
+        priority: parseInt(row.priority || '10'),
+        daycode: row.daycode,
+        isStp: false,
+        from: row.from,
+        to: row.to
+      }));
+
+      const stpData = parseCsv(stpRes).map((row: any) => ({
+        jobid: row.jobid,
+        name: row.name,
+        priority: parseInt(row.priority || '10'),
+        daycode: row.daycode,
+        isStp: true,
+        from: row.from,
+        to: row.to
+      }));
+
+      const hm: Record<string, string[]> = {};
+      const hcLines = hcRes.split('\n');
+      hcLines.forEach((line: string, index: number) => {
+        if (index === 0 || !line.trim()) return;
+        const firstComma = line.indexOf(',');
+        const secondComma = line.indexOf(',', firstComma + 1);
+        if (firstComma > -1 && secondComma > -1) {
+          const ltp_id = line.substring(0, firstComma);
+          const stp_id = line.substring(firstComma + 1, secondComma);
+          const headcodesStr = line.substring(secondComma + 1).trim();
+          try {
+            let cleanStr = headcodesStr;
+            if (cleanStr.startsWith('"') && cleanStr.endsWith('"')) {
+              cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/""/g, '"');
+            }
+            const hcs = JSON.parse(cleanStr);
+            if (ltp_id && ltp_id !== 'NULL') hm[`ltp_${ltp_id}`] = hcs;
+            if (stp_id && stp_id !== 'NULL') hm[`stp_${stp_id}`] = hcs;
+          } catch (e) {
+             // ignore parse error
+          }
+        }
+      });
+
+      const allJobs = [...ltpData, ...stpData];
+      const uniqueJobsMap = new Map<string, any>();
+      allJobs.forEach(job => {
+        if (!job.name) return;
+        const existing = uniqueJobsMap.get(job.name);
+        if (!existing) {
+          uniqueJobsMap.set(job.name, job);
+        } else {
+          if (job.isStp && !existing.isStp) {
+            uniqueJobsMap.set(job.name, job);
+          } else if (job.isStp === existing.isStp) {
+            if (job.priority < existing.priority) {
+              uniqueJobsMap.set(job.name, job);
+            }
+          }
+        }
+      });
+
+      const unifiedJobs = Array.from(uniqueJobsMap.values());
+      unifiedJobs.sort((a, b) => a.name.localeCompare(b.name));
+
+      res.json({ jobs: unifiedJobs, headcodesMap: hm });
+    } catch (e: any) {
+      console.error('Failed to parse diagrams API', e);
+      res.status(500).json({ error: 'Failed to read diagrams' });
+    }
+  });
+
   interface StationCacheEntry {
     timestamp: number;
     servicesMap: Map<string, any>;
@@ -508,7 +603,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
 
     const fetchBoard = async (timeVal: string) => {
       checkRateLimit();
-      recordApiRequest(req.user.id);
+      recordApiRequest((req as any).user.id);
       const timeElement = timeVal ? `<ldb:time>${timeVal}</ldb:time>` : `<ldb:time>${new Date().toISOString().substring(0, 19)}</ldb:time>`;
       
       let requestName = '';
@@ -549,7 +644,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
       } else {
           requestName = 'GetDepBoardWithDetailsRequest';
           requestInner = `
-          <ldb:numRows>10</ldb:numRows>
+          <ldb:numRows>150</ldb:numRows>
           <ldb:crs>${targetCrsKey}</ldb:crs>
           ${timeElement}
           <ldb:timeWindow>120</ldb:timeWindow>

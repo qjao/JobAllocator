@@ -6,6 +6,7 @@ import { cn, getFinancialWeek } from '../lib/utils';
 import { io } from 'socket.io-client';
 
 import HelpModal from './HelpModal';
+import DiagramSelector from './DiagramSelector';
 
 interface DashboardProps {
   user: User;
@@ -23,10 +24,6 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
   const [loading, setLoading] = useState(true);
 
   // Form state
-  const [jobNumber, setJobNumber] = useState('');
-  const [isFullJob, setIsFullJob] = useState(true);
-  const [headcodesInput, setHeadcodesInput] = useState('');
-  const [notesInput, setNotesInput] = useState('');
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -40,7 +37,6 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
   const [editInstructorId, setEditInstructorId] = useState('');
   const [editFormError, setEditFormError] = useState('');
   const [editSubmitting, setEditSubmitting] = useState(false);
-  const [showNotes, setShowNotes] = useState(false);
   const [showEditNotes, setShowEditNotes] = useState(false);
   const [showOnlyMine, setShowOnlyMine] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
@@ -220,33 +216,16 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
     return conflicts;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddAllocation = async (job: string, fullJob: boolean, headcodes: string[], notes: string) => {
     setFormError('');
 
-    const job = jobNumber.trim().toUpperCase();
     const jobError = validateJobNumber(job, selectedDate);
     if (jobError) {
       setFormError(jobError);
       return;
     }
 
-    let parsedHeadcodes: string[] = [];
-    if (!isFullJob) {
-      parsedHeadcodes = headcodesInput.split(',').map(h => h.trim().toUpperCase()).filter(h => h);
-      if (parsedHeadcodes.length === 0) {
-        setFormError('Please enter at least one headcode for a partial job.');
-        return;
-      }
-      for (const hc of parsedHeadcodes) {
-        if (!validateHeadcode(hc)) {
-          setFormError(`Invalid headcode format: ${hc}. Must be XLXX (e.g., 1A23).`);
-          return;
-        }
-      }
-    }
-
-    const conflicts = checkConflicts(job, isFullJob, parsedHeadcodes);
+    const conflicts = checkConflicts(job, fullJob, headcodes);
     if (conflicts.length > 0) {
       setFormError(conflicts[0].message);
       return;
@@ -264,19 +243,13 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
         body: JSON.stringify({
           date: dateStr,
           jobNumber: job,
-          isFullJob,
-          headcodes: isFullJob ? [] : parsedHeadcodes,
-          notes: notesInput.trim()
+          isFullJob: fullJob,
+          headcodes: fullJob ? [] : headcodes,
+          notes: notes.trim()
         })
       });
 
       if (!res.ok) throw new Error('Failed to add allocation');
-      
-      setJobNumber('');
-      setHeadcodesInput('');
-      setNotesInput('');
-      setIsFullJob(true);
-      setShowNotes(false);
     } catch (error) {
       console.error("Error adding allocation:", error);
       setFormError('Failed to add allocation. Check permissions.');
@@ -416,101 +389,21 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
         </div>
       </Header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left Column: Form */}
-        <div className="lg:col-span-1">
-          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 sticky top-24 transition-colors">
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
-              <Plus className="w-5 h-5 text-blue-500 dark:text-blue-400" />
-              Claim Job
-            </h2>
-            
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Job Number</label>
-                <input
-                  type="text"
-                  value={jobNumber}
-                  onChange={(e) => setJobNumber(e.target.value.toUpperCase())}
-                  placeholder="e.g., AB1234"
-                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 uppercase transition-colors"
-                  maxLength={6}
-                  required
-                />
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Format: 2 letters, 4 numbers (LLXXXX)</p>
-              </div>
-
-              <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg border border-slate-200 dark:border-slate-600 transition-colors">
-                <input
-                  type="checkbox"
-                  id="fullJob"
-                  checked={isFullJob}
-                  onChange={(e) => setIsFullJob(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 dark:text-blue-500 rounded border-slate-300 dark:border-slate-500 focus:ring-blue-500 bg-white dark:bg-slate-800"
-                />
-                <label htmlFor="fullJob" className="text-sm font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
-                  Claim Full Job
-                </label>
-              </div>
-
-              {!isFullJob && (
-                <div className="animate-in fade-in slide-in-from-top-2 duration-200">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Headcodes</label>
-                  <input
-                    type="text"
-                    value={headcodesInput}
-                    onChange={(e) => setHeadcodesInput(e.target.value.toUpperCase())}
-                    placeholder="e.g., 1A23, 2B45"
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 uppercase transition-colors"
-                    required={!isFullJob}
-                  />
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Comma separated. Format: XLXX</p>
-                </div>
-              )}
-
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowNotes(!showNotes)}
-                  className="flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors mb-1"
-                >
-                  Instructor Notes (Optional)
-                  <span className="text-blue-500 dark:text-blue-400 font-bold text-lg leading-none">{showNotes ? '-' : '+'}</span>
-                </button>
-                {showNotes && (
-                  <div className="animate-in fade-in slide-in-from-top-2 duration-200">
-                    <textarea
-                      value={notesInput}
-                      onChange={(e) => setNotesInput(e.target.value)}
-                      placeholder="Add any relevant notes..."
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 min-h-[80px] resize-y transition-colors"
-                      maxLength={500}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {formError && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-2 text-red-700 dark:text-red-400 text-sm transition-colors">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <p>{formError}</p>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 px-4 rounded-lg transition-colors"
-              >
-                {submitting ? 'Adding...' : 'Add Allocation'}
-              </button>
-            </form>
+      <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column: Form */}
+          <div className="lg:col-span-1">
+            <DiagramSelector 
+              darkMode={darkMode}
+              selectedDate={selectedDate}
+              onAddAllocation={handleAddAllocation}
+              formError={formError}
+              submitting={submitting}
+            />
           </div>
-        </div>
 
-        {/* Right Column: List */}
-        <div className="lg:col-span-2 space-y-4">
+          {/* Right Column: List */}
+          <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Allocations for {format(selectedDate, 'MMM d')}</h2>
             <div className="flex items-center gap-4">
@@ -586,9 +479,9 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
 
                         {!alloc.isFullJob && alloc.headcodes.length > 0 && (
                           <div className="flex flex-wrap gap-1.5">
-                            {alloc.headcodes.map(hc => (
+                            {alloc.headcodes.map((hc, idx) => (
                               <a 
-                                key={hc} 
+                                key={`${hc}-${idx}`} 
                                 href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${alloc.date}&headcode=${hc}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -637,6 +530,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
               })}
             </div>
           )}
+        </div>
         </div>
       </main>
 
