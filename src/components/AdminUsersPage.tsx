@@ -197,7 +197,7 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
         onHelp={() => setShowHelpModal(true)}
       />
 
-      <main className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-4 py-8">
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 text-blue-600 dark:text-blue-400 animate-spin" />

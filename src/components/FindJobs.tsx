@@ -305,7 +305,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
         onHelp={() => setShowHelpModal(true)}
       />
 
-      <main className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">Find Jobs (Live Departures)</h1>
           <p className="text-slate-600 dark:text-slate-400">Search for live train departures from any station to find headcodes.</p>

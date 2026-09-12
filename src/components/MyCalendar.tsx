@@ -401,7 +401,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
         onHelp={() => setShowHelpModal(true)}
       />
 
-      <main className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-6xl mx-auto px-4 py-8">
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors">
           {/* Calendar Header */}
           <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50 dark:bg-slate-800/50 gap-4 transition-colors">
