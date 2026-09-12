@@ -418,7 +418,7 @@ async function startServer() {
   });
 
   // Diagrams API: serve diagrams from data directory
-  app.get('/api/diagrams', authenticateToken, (req, res) => {
+  app.get("/api/diagrams", (req, res) => {
     try {
       const parseCsv = (content: string) => {
         const lines = content.split('\n');
@@ -495,27 +495,8 @@ async function startServer() {
       });
 
       const allJobs = [...ltpData, ...stpData];
-      const uniqueJobsMap = new Map<string, any>();
-      allJobs.forEach(job => {
-        if (!job.name) return;
-        const existing = uniqueJobsMap.get(job.name);
-        if (!existing) {
-          uniqueJobsMap.set(job.name, job);
-        } else {
-          if (job.isStp && !existing.isStp) {
-            uniqueJobsMap.set(job.name, job);
-          } else if (job.isStp === existing.isStp) {
-            if (job.priority < existing.priority) {
-              uniqueJobsMap.set(job.name, job);
-            }
-          }
-        }
-      });
-
-      const unifiedJobs = Array.from(uniqueJobsMap.values());
-      unifiedJobs.sort((a, b) => a.name.localeCompare(b.name));
-
-      res.json({ jobs: unifiedJobs, headcodesMap: hm });
+      allJobs.sort((a, b) => a.name.localeCompare(b.name));
+      res.json({ jobs: allJobs, headcodesMap: hm });
     } catch (e: any) {
       console.error('Failed to parse diagrams API', e);
       res.status(500).json({ error: 'Failed to read diagrams' });

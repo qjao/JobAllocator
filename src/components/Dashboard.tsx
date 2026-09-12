@@ -19,7 +19,8 @@ interface DashboardProps {
 import Header from './Header';
 
 export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: DashboardProps) {
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  // Default to 2026-09-12 for demonstration purposes since the CSV data provided is primarily for this Saturday
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date('2026-09-12T12:00:00Z'));
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [loading, setLoading] = useState(true);
 

@@ -147,7 +147,7 @@ export default function DiagramSelector({ darkMode, selectedDate, onAddAllocatio
   // Handle diagram selection change without clearing headcodes if same diagram
   useEffect(() => {
     if (selectedDiagram) {
-      const job = jobs.find(j => j.name === selectedDiagram);
+      const job = availableDiagrams.find(j => j.name === selectedDiagram);
       if (job) {
         const key = job.isStp ? `stp_${job.jobid}` : `ltp_${job.jobid}`;
         const hcs = headcodesMap[key] || [];
