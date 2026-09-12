@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Plus, AlertTriangle } from 'lucide-react';
+import { Loader2, Plus, AlertTriangle, X } from 'lucide-react';
 import { Allocation } from '../types';
 
 interface JobData {
@@ -20,6 +20,8 @@ interface DiagramSelectorProps {
   onAddAllocation: (jobNumber: string, isFullJob: boolean, headcodes: string[], notes: string) => Promise<void>;
   formError?: string;
   submitting?: boolean;
+  onCancel?: () => void;
+  title?: string;
 }
 
 const DEPOT_NAMES: Record<string, string> = {
@@ -32,7 +34,7 @@ const DEPOT_NAMES: Record<string, string> = {
   'SH': 'Shenfield'
 };
 
-export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting }: DiagramSelectorProps) {
+export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
   
@@ -232,6 +234,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
     setSelectedDepot('');
     setIsFullDiagram(true);
     setNotesInput('');
+    if (onCancel) onCancel();
   };
 
   if (loading) {
@@ -252,10 +255,19 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   }
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-      <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 relative">
+      {onCancel && (
+        <button 
+          type="button"
+          onClick={onCancel}
+          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+        >
+          <X className="w-5 h-5" />
+        </button>
+      )}
+      <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 pr-8 flex items-center gap-2">
         <Plus className="w-6 h-6 text-blue-500 dark:text-blue-400" />
-        Claim Job
+        {title || 'Claim Job'}
       </h2>
       
       <form onSubmit={handleSubmit}>
@@ -390,13 +402,15 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={!selectedDiagram || submitting || (!isFullDiagram && selectedHeadcodeIndices.length === 0)}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors shadow-sm"
-          >
-            {submitting ? 'Adding...' : 'Add Allocation'}
-          </button>
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={!selectedDiagram || submitting || (!isFullDiagram && selectedHeadcodeIndices.length === 0)}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors shadow-sm"
+            >
+              {submitting ? 'Adding...' : 'Add Allocation'}
+            </button>
+          </div>
         </div>
       </form>
     </div>

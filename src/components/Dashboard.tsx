@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { format, addDays, subDays } from 'date-fns';
+import { format, addDays, subDays, isSameDay } from 'date-fns';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, LogOut, AlertTriangle, Plus, Trash2, CheckCircle2, Train, Pencil, Shield, User as UserIcon, HelpCircle, X, Moon, Sun, Search } from 'lucide-react';
 import { Allocation, Conflict, User } from '../types';
 import { cn, getFinancialWeek } from '../lib/utils';
@@ -7,6 +7,8 @@ import { io } from 'socket.io-client';
 
 import HelpModal from './HelpModal';
 import DiagramSelector from './DiagramSelector';
+import MiniCalendar from './MiniCalendar';
+import { useRef } from 'react';
 
 interface DashboardProps {
   user: User;
@@ -23,6 +25,22 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
   const [selectedDate, setSelectedDate] = useState<Date>(new Date('2026-09-12T12:00:00Z'));
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const datePickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
+        setShowDatePicker(false);
+      }
+    };
+    if (showDatePicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showDatePicker]);
 
   // Form state
   const [formError, setFormError] = useState('');
@@ -365,7 +383,8 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
         toggleDarkMode={toggleDarkMode}
         onHelp={() => setShowHelpModal(true)}
       >
-        <div className="flex items-center bg-slate-100 dark:bg-slate-700/50 rounded-lg p-1 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center bg-slate-100 dark:bg-slate-700/50 rounded-lg p-1 shrink-0">
           <button 
             onClick={() => setSelectedDate(subDays(selectedDate, 1))}
             className="p-1 hover:bg-white dark:hover:bg-slate-600 rounded-md transition-colors text-slate-600 dark:text-slate-300"
@@ -373,9 +392,26 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
             <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
           <div className="flex flex-col items-center justify-center min-w-[110px] sm:min-w-[140px]">
-            <div className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 font-medium text-slate-700 dark:text-slate-200 text-xs sm:text-sm">
-              <CalendarIcon className="w-3 h-3 sm:w-4 sm:h-4 text-slate-400 dark:text-slate-400" />
-              {format(selectedDate, 'MMM d, yyyy')}
+            <div className="relative" ref={datePickerRef}>
+              <button 
+                onClick={() => setShowDatePicker(!showDatePicker)}
+                className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 font-medium text-slate-700 dark:text-slate-200 text-xs sm:text-sm hover:bg-slate-200 dark:hover:bg-slate-600 rounded-md transition-colors"
+              >
+                <CalendarIcon className="w-3 h-3 sm:w-4 sm:h-4 text-slate-400 dark:text-slate-400" />
+                {format(selectedDate, 'MMM d, yyyy')}
+              </button>
+              
+              {showDatePicker && (
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <MiniCalendar 
+                    selectedDate={selectedDate} 
+                    onSelectDate={(date) => {
+                      setSelectedDate(date);
+                      setShowDatePicker(false);
+                    }} 
+                  />
+                </div>
+              )}
             </div>
             <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mt-0.5">
               Week {getFinancialWeek(selectedDate).week}
@@ -387,6 +423,19 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
           >
             <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
+        </div>
+        
+        <button
+          onClick={() => setSelectedDate(new Date())}
+          className={cn(
+            "px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors shadow-sm shrink-0",
+            isSameDay(selectedDate, new Date())
+              ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800"
+              : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700"
+          )}
+        >
+          Today
+        </button>
         </div>
       </Header>
 

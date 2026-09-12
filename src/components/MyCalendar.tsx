@@ -16,6 +16,7 @@ interface MyCalendarProps {
 }
 
 import Header from './Header';
+import DiagramSelector from './DiagramSelector';
 
 export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggleDarkMode }: MyCalendarProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -341,6 +342,55 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
     setClaimNotesInput('');
     setShowClaimNotes(false);
     setClaimFormError('');
+  };
+
+  const handleAddAllocationFromModal = async (jobNumber: string, isFullJob: boolean, headcodes: string[], notes: string) => {
+    if (!claimModalDate) return;
+    setClaimFormError('');
+
+    const dateStr = format(claimModalDate, 'yyyy-MM-dd');
+    const jobError = validateJobNumber(jobNumber, dateStr);
+    if (jobError) {
+      setClaimFormError(jobError);
+      throw new Error(jobError); // DiagramSelector needs a rejected promise or form error
+    }
+
+    const conflicts = checkConflicts(jobNumber, isFullJob, headcodes, dateStr);
+    if (conflicts.length > 0) {
+      setClaimFormError(conflicts[0].message);
+      throw new Error(conflicts[0].message);
+    }
+
+    setClaimSubmitting(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/allocations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          date: dateStr,
+          jobNumber,
+          isFullJob,
+          headcodes,
+          notes
+        })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to add allocation');
+      }
+
+      setClaimModalDate(null);
+    } catch (err: any) {
+      setClaimFormError(err.message || 'An unexpected error occurred');
+      throw err;
+    } finally {
+      setClaimSubmitting(false);
+    }
   };
 
   const handleClaimSubmit = async (e: React.FormEvent) => {
@@ -808,97 +858,23 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
         </div>
       )}
       {claimModalDate && (
-        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-800 rounded-xl p-6 max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto transition-colors">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
-              <Plus className="w-5 h-5 text-blue-500 dark:text-blue-400" />
-              Claim Job for {format(claimModalDate, 'MMM d, yyyy')}
-            </h3>
-            
-            <form onSubmit={handleClaimSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Job Number</label>
-                <input
-                  type="text"
-                  value={claimJobNumber}
-                  onChange={(e) => setClaimJobNumber(e.target.value.toUpperCase())}
-                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 uppercase transition-colors"
-                  maxLength={6}
-                  required
-                />
-              </div>
-
-              <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg border border-slate-200 dark:border-slate-600 transition-colors">
-                <input
-                  type="checkbox"
-                  id="claimFullJob"
-                  checked={claimIsFullJob}
-                  onChange={(e) => setClaimIsFullJob(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 dark:text-blue-500 rounded border-slate-300 dark:border-slate-500 focus:ring-blue-500 bg-white dark:bg-slate-800"
-                />
-                <label htmlFor="claimFullJob" className="text-sm font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
-                  Claim Full Job
-                </label>
-              </div>
-
-              {!claimIsFullJob && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Headcodes</label>
-                  <input
-                    type="text"
-                    value={claimHeadcodesInput}
-                    onChange={(e) => setClaimHeadcodesInput(e.target.value.toUpperCase())}
-                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 uppercase transition-colors"
-                    required={!claimIsFullJob}
-                  />
-                </div>
-              )}
-
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowClaimNotes(!showClaimNotes)}
-                  className="flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors mb-1"
-                >
-                  Instructor Notes (Optional)
-                  <span className="text-blue-500 dark:text-blue-400 font-bold text-lg leading-none">{showClaimNotes ? '-' : '+'}</span>
-                </button>
-                {showClaimNotes && (
-                  <div className="animate-in fade-in slide-in-from-top-2 duration-200">
-                    <textarea
-                      value={claimNotesInput}
-                      onChange={(e) => setClaimNotesInput(e.target.value)}
-                      className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 min-h-[80px] resize-y transition-colors"
-                      maxLength={500}
-                    />
-                  </div>
-                )}
-              </div>
-
-              {claimFormError && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-2 text-red-700 dark:text-red-400 text-sm transition-colors">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <p>{claimFormError}</p>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-3 pt-2">
-                <button 
-                  type="button"
-                  onClick={() => setClaimModalDate(null)}
-                  className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg font-medium transition-colors text-sm"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  disabled={claimSubmitting}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors text-sm"
-                >
-                  {claimSubmitting ? 'Claiming...' : 'Claim Job'}
-                </button>
-              </div>
-            </form>
+        <div 
+          className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setClaimModalDate(null);
+          }}
+        >
+          <div className="max-w-md w-full shadow-xl max-h-[90vh] overflow-y-auto">
+            <DiagramSelector 
+              darkMode={darkMode}
+              selectedDate={claimModalDate}
+              allocations={allocations}
+              onAddAllocation={handleAddAllocationFromModal}
+              formError={claimFormError}
+              submitting={claimSubmitting}
+              onCancel={() => setClaimModalDate(null)}
+              title={`Claim Job for ${format(claimModalDate, 'MMM d, yyyy')}`}
+            />
           </div>
         </div>
       )}
