@@ -104,6 +104,7 @@ const ELIZABETH_LINE_DESTINATIONS = [
 ].sort((a, b) => a.name.localeCompare(b.name));
 
 import Header from './Header';
+import { getLondonDate } from '../lib/utils';
 
 export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: FindJobsProps) {
   const [crs, setCrs] = useState('PADTLL');
