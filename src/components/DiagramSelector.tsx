@@ -285,7 +285,8 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
     );
   }
 
-  const currentJob = jobs.find(j => j.name === selectedDiagram);
+  // Prefer the deduplicated version (which correctly prioritizes STP over LTP)
+  const currentJob = availableDiagrams.find(j => j.name === selectedDiagram);
 
   if (apiError) {
     return (
@@ -382,30 +383,37 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
         </div>
 
         {currentJob && currentJob.pdfname && currentJob.page && (
-          <div 
-            className="mt-6 mb-2 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-white block relative group cursor-zoom-in"
-            onClick={() => setIsPreviewOpen(true)}
-          >
-            <img 
-              src={`https://tdtools.co.uk/roster/diagramimg.php?pdfname=${currentJob.pdfname}&page=${currentJob.page}`} 
-              alt={`Diagram Preview for ${selectedDiagram}`} 
-              className="w-[140%] max-w-[140%] -ml-[10%] -mb-[40%] h-auto shrink-0" 
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = 'none';
-              }}
-            />
-            <div
-              className="absolute top-2 right-2 p-2 bg-slate-900/60 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm shadow-sm pointer-events-none"
+          <div className="w-full flex justify-center">
+            <div 
+              id="diagram-preview-box"
+              className="mt-6 mb-2 w-full lg:w-[300px] h-auto lg:h-[425px] border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-white block relative group cursor-zoom-in shadow-sm"
+              onClick={() => setIsPreviewOpen(true)}
             >
-              <Maximize2 className="w-5 h-5" />
+              <img 
+                src={`https://tdtools.co.uk/roster/diagramimg.php?pdfname=${currentJob.pdfname}&page=${currentJob.page}`} 
+                alt={`Diagram Preview for ${selectedDiagram}`} 
+                className={
+                  currentJob.isStp 
+                    ? "w-[145%] max-w-[145%] -ml-[8%] -mb-[40%] lg:mb-0 h-auto shrink-0" 
+                    : "w-[133%] max-w-[133%] -ml-[2%] -mb-[54%] lg:mb-0 h-auto shrink-0"
+                }
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+              <div
+                className="absolute top-2 right-2 p-2 bg-slate-900/60 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm shadow-sm pointer-events-none"
+              >
+                <Maximize2 className="w-5 h-5" />
+              </div>
             </div>
           </div>
         )}
 
         {selectedDiagram && availableHeadcodes.length > 0 && (
-          <div className="mb-6 border-t border-slate-200 dark:border-slate-700 pt-6 animate-in fade-in slide-in-from-top-2 duration-200">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-4">
+          <div className="mb-6 mt-4 animate-in fade-in slide-in-from-top-2 duration-200">
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
               Select Headcodes
             </label>
             

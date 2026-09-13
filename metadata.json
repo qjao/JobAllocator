@@ -1,5 +1,6 @@
 {
   "name": "Remix: Train Driver Instructor Job Allocator w/ RTT",
   "description": "A real-time job allocation and conflict detection tool for train driver instructors to coordinate daily tasks and headcodes.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
