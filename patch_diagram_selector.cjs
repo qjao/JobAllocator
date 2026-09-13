@@ -1,55 +1,34 @@
 const fs = require('fs');
 let code = fs.readFileSync('src/components/DiagramSelector.tsx', 'utf8');
 
-const target = `  useEffect(() => {
-    if (selectedDiagram) {
-      const job = availableDiagrams.find(j => j.name === selectedDiagram);
-      if (job) {
-        const key = job.isStp ? \`stp_\${job.jobid}\` : \`ltp_\${job.jobid}\`;
-        const hcs = headcodesMap[key] || [];
-        setAvailableHeadcodes(hcs);
-        if (isFullDiagram) {
-          setSelectedHeadcodeIndices(hcs.map((_, i) => i));
-        }
-      }
-    } else {
-      setAvailableHeadcodes([]);
-      setSelectedHeadcodeIndices([]);
-    }
-  }, [selectedDiagram, jobs, headcodesMap]);`;
+const target1 = `  if (apiError) {`;
+const replacement1 = `  const currentJob = jobs.find(j => j.name === selectedDiagram);
 
-const replacement = `  useEffect(() => {
-    if (selectedDiagram) {
-      const job = availableDiagrams.find(j => j.name === selectedDiagram);
-      if (job) {
-        const key = job.isStp ? \`stp_\${job.jobid}\` : \`ltp_\${job.jobid}\`;
-        const hcs = headcodesMap[key] || [];
-        setAvailableHeadcodes(hcs);
-        
-        if (!initialized && initialAllocation) {
-          if (initialAllocation.isFullJob) {
-            setSelectedHeadcodeIndices(hcs.map((_, i) => i));
-          } else {
-            const indices = initialAllocation.headcodes
-              .map(hc => hcs.indexOf(hc))
-              .filter(i => i !== -1);
-            setSelectedHeadcodeIndices(indices);
-          }
-          setInitialized(true);
-        } else if (isFullDiagram) {
-          setSelectedHeadcodeIndices(hcs.map((_, i) => i));
-        }
-      }
-    } else {
-      setAvailableHeadcodes([]);
-      setSelectedHeadcodeIndices([]);
-    }
-  }, [selectedDiagram, jobs, headcodesMap, availableDiagrams, initialized, initialAllocation, isFullDiagram]);`;
+  if (apiError) {`;
 
-if (code.includes(target)) {
-  code = code.replace(target, replacement);
-  fs.writeFileSync('src/components/DiagramSelector.tsx', code);
-  console.log("Patched successfully!");
-} else {
-  console.log("Target not found!");
-}
+const target2 = `        </div>
+
+        {selectedDiagram && availableHeadcodes.length > 0 && (`;
+
+const replacement2 = `        </div>
+
+        {currentJob && currentJob.pdfname && currentJob.page && (
+          <div className="mt-6 mb-2 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-900/50">
+            <img 
+              src={\`https://tdtools.co.uk/roster/diagramimg.php?pdfname=\${currentJob.pdfname}&page=\${currentJob.page}\`} 
+              alt={\`Diagram Preview for \${selectedDiagram}\`} 
+              className="w-full h-auto object-contain max-h-[400px]" 
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          </div>
+        )}
+
+        {selectedDiagram && availableHeadcodes.length > 0 && (`;
+
+code = code.replace(target1, replacement1);
+code = code.replace(target2, replacement2);
+
+fs.writeFileSync('src/components/DiagramSelector.tsx', code);

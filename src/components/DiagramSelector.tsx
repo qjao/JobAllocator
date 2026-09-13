@@ -11,6 +11,8 @@ interface JobData {
   from?: string;
   to?: string;
   cancel?: boolean;
+  pdfname?: string;
+  page?: string;
 }
 
 interface DiagramSelectorProps {
@@ -281,6 +283,8 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
     );
   }
 
+  const currentJob = jobs.find(j => j.name === selectedDiagram);
+
   if (apiError) {
     return (
       <div className="bg-red-50 dark:bg-red-900/20 p-6 rounded-xl border border-red-200 dark:border-red-800/30 text-red-700 dark:text-red-400 flex items-center gap-3">
@@ -374,6 +378,20 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             </div>
           )}
         </div>
+
+        {currentJob && currentJob.pdfname && currentJob.page && (
+          <div className="mt-6 mb-2 border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-900/50">
+            <img 
+              src={`https://tdtools.co.uk/roster/diagramimg.php?pdfname=${currentJob.pdfname}&page=${currentJob.page}`} 
+              alt={`Diagram Preview for ${selectedDiagram}`} 
+              className="w-full h-auto object-contain max-h-[400px]" 
+              referrerPolicy="no-referrer"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          </div>
+        )}
 
         {selectedDiagram && availableHeadcodes.length > 0 && (
           <div className="mb-6 border-t border-slate-200 dark:border-slate-700 pt-6 animate-in fade-in slide-in-from-top-2 duration-200">

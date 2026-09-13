@@ -487,7 +487,9 @@ async function startServer() {
         daycode: row.daycode,
         isStp: false,
         from: row.from,
-        to: row.to
+        to: row.to,
+        pdfname: row.pdfname,
+        page: row.pdfpage
       }));
 
       const stpData = parseCsv(stpRes).map((row: any) => ({
@@ -498,7 +500,9 @@ async function startServer() {
         isStp: true,
         from: row.from,
         to: row.to,
-        cancel: row.cancel === '1'
+        cancel: row.cancel === '1',
+        pdfname: row.pdfname,
+        page: row.pdfpage
       }));
 
       const hm: Record<string, string[]> = {};
