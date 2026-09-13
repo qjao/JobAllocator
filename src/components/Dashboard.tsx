@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { format, addDays, subDays, isSameDay } from 'date-fns';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, LogOut, AlertTriangle, Plus, Trash2, CheckCircle2, Train, Pencil, Shield, User as UserIcon, HelpCircle, X, Moon, Sun, Search } from 'lucide-react';
 import { Allocation, Conflict, User } from '../types';
-import { cn, getFinancialWeek } from '../lib/utils';
+import { cn, getFinancialWeek, getLondonDate } from '../lib/utils';
 import { io } from 'socket.io-client';
 
 import HelpModal from './HelpModal';
@@ -21,8 +21,7 @@ interface DashboardProps {
 import Header from './Header';
 
 export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: DashboardProps) {
-  // Default to 2026-09-12 for demonstration purposes since the CSV data provided is primarily for this Saturday
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date('2026-09-12T12:00:00Z'));
+  const [selectedDate, setSelectedDate] = useState<Date>(getLondonDate());
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [loading, setLoading] = useState(true);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -427,10 +426,10 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
         </div>
         
         <button
-          onClick={() => setSelectedDate(new Date())}
+          onClick={() => setSelectedDate(getLondonDate())}
           className={cn(
             "px-3 py-1.5 text-xs font-bold rounded-lg border transition-colors shadow-sm shrink-0",
-            isSameDay(selectedDate, new Date())
+            isSameDay(selectedDate, getLondonDate())
               ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800"
               : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700"
           )}

@@ -29,3 +29,31 @@ export function getFinancialWeek(date: Date): { week: number, year: number } {
 
   return { week: weekNumber, year: financialYear };
 }
+
+export function getLondonDate(): Date {
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false,
+  });
+  
+  const parts = formatter.formatToParts(new Date());
+  const dateParts: Record<string, string> = {};
+  for (const part of parts) {
+    dateParts[part.type] = part.value;
+  }
+  
+  return new Date(
+    parseInt(dateParts.year),
+    parseInt(dateParts.month) - 1,
+    parseInt(dateParts.day),
+    parseInt(dateParts.hour),
+    parseInt(dateParts.minute),
+    parseInt(dateParts.second)
+  );
+}

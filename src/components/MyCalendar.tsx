@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks, subWeeks, isSameDay, startOfMonth, endOfMonth } from 'date-fns';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Home, Loader2, CheckCircle2, Moon, Sun, LogOut, X, Pencil, Trash2, AlertTriangle, Shield, User as UserIcon, HelpCircle, Plus } from 'lucide-react';
 import { Allocation, User, Conflict } from '../types';
-import { cn, getFinancialWeek } from '../lib/utils';
+import { cn, getFinancialWeek, getLondonDate } from '../lib/utils';
 import HelpModal from './HelpModal';
 
 import { io } from 'socket.io-client';
@@ -19,7 +19,7 @@ import Header from './Header';
 import DiagramSelector from './DiagramSelector';
 
 export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggleDarkMode }: MyCalendarProps) {
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentDate, setCurrentDate] = useState(getLondonDate());
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [loading, setLoading] = useState(true);
   const [showOnlyMine, setShowOnlyMine] = useState(false);
@@ -128,7 +128,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
 
   const nextWeek = () => setCurrentDate(addWeeks(currentDate, 1));
   const prevWeek = () => setCurrentDate(subWeeks(currentDate, 1));
-  const today = () => setCurrentDate(new Date());
+  const today = () => setCurrentDate(getLondonDate());
 
   const getAllocationsForDay = (date: Date) => {
     const dateStr = format(date, 'yyyy-MM-dd');
@@ -458,7 +458,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
             <div className="grid grid-cols-1 md:grid-cols-7 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-700 transition-colors">
               {daysInWeek.map((day, i) => {
                 const dayAllocations = getAllocationsForDay(day);
-                const isToday = isSameDay(day, new Date());
+                const isToday = isSameDay(day, getLondonDate());
                 
                 return (
                   <div key={day.toISOString()} className={cn(

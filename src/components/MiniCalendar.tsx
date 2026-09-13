@@ -53,7 +53,7 @@ export default function MiniCalendar({ selectedDate, onSelectDate }: MiniCalenda
         {days.map((day, i) => {
           const isSelected = isSameDay(day, selectedDate);
           const isCurrentMonth = isSameMonth(day, monthStart);
-          const isToday = isSameDay(day, new Date());
+          const isToday = isSameDay(day, getLondonDate());
 
           return (
             <button
@@ -76,8 +76,8 @@ export default function MiniCalendar({ selectedDate, onSelectDate }: MiniCalenda
       <div className="pt-3 mt-3 border-t border-slate-100 dark:border-slate-700">
         <button
           onClick={() => {
-            setCurrentMonth(startOfMonth(new Date()));
-            onSelectDate(new Date());
+            setCurrentMonth(startOfMonth(getLondonDate()));
+            onSelectDate(getLondonDate());
           }}
           className="w-full py-2 text-xs font-bold text-blue-600 dark:text-blue-400 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/20 dark:hover:bg-blue-900/40 rounded-md transition-colors"
         >
