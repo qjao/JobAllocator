@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, Plus, AlertTriangle, X, Pencil, Maximize2 } from 'lucide-react';
 import { Allocation } from '../types';
@@ -66,6 +66,22 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   const [depots, setDepots] = useState<string[]>([]);
   const [availableDiagrams, setAvailableDiagrams] = useState<JobData[]>([]);
   const [availableHeadcodes, setAvailableHeadcodes] = useState<string[]>([]);
+
+  // Clear selections on date change
+  const dateKey = `${selectedDate.getFullYear()}-${selectedDate.getMonth()}-${selectedDate.getDate()}`;
+  const prevDateKeyRef = useRef(dateKey);
+
+  useEffect(() => {
+    if (prevDateKeyRef.current !== dateKey) {
+      prevDateKeyRef.current = dateKey;
+      setSelectedDepot('');
+      setSelectedDiagram('');
+      setSelectedHeadcodeIndices([]);
+      setIsFullDiagram(true);
+      setShowNotes(false);
+      setNotesInput('');
+    }
+  }, [dateKey]);
 
   useEffect(() => {
     const loadData = async () => {
