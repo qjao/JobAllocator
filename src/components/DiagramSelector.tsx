@@ -384,7 +384,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             <img 
               src={`https://tdtools.co.uk/roster/diagramimg.php?pdfname=${currentJob.pdfname}&page=${currentJob.page}`} 
               alt={`Diagram Preview for ${selectedDiagram}`} 
-              className="w-[140%] max-w-[140%] -ml-[20%] -mb-[40%] h-auto shrink-0" 
+              className="w-[140%] max-w-[140%] -ml-[10%] -mb-[40%] h-auto shrink-0" 
               referrerPolicy="no-referrer"
               onError={(e) => {
                 (e.target as HTMLImageElement).style.display = 'none';
