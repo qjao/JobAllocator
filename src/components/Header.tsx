@@ -48,101 +48,32 @@ export default function Header({ user, currentView, onNavigate, onLogout, darkMo
           <span className="hidden lg:inline">Instructor Job Allocator</span>
         </div>
 
-        {/* Center */}
-        {children && (
-          <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center z-0">
-            {children}
-          </div>
-        )}
+        {/* Right Area: Wraps Date Picker and Nav */}
+        <div className="flex flex-1 items-center justify-end gap-2 sm:gap-4 h-full relative">
+          {/* Centered Children (Absolute) */}
+          {children && (
+            <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center z-0 w-max max-w-full">
+              {children}
+            </div>
+          )}
 
-        {/* Right */}
-        <div className="flex items-center gap-2 sm:gap-4 shrink-0 z-10 ml-auto">
-          {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-2 sm:gap-4 ml-2">
+          {/* Nav / Hamburger */}
+          <div className="flex items-center gap-2 sm:gap-4 shrink-0 z-10">
+            {/* Menu Toggle (always visible) */}
+            <button
+              className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            >
+              {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Dropdown Menu (always responsive) */}
+        {isMobileMenuOpen && (
+          <div ref={menuRef} className="absolute top-16 right-4 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-2 flex flex-col z-40">
             {currentView !== 'dashboard' && (
               <button 
-                onClick={() => handleNav('dashboard')} 
-                className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
-              >
-                <Home className="w-4 h-4" /> <span>Dashboard</span>
-              </button>
-            )}
-            {currentView !== 'find-jobs' && (
-              <button 
-                onClick={() => handleNav('find-jobs')} 
-                className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
-              >
-                <Search className="w-4 h-4" /> <span>Find Jobs</span>
-              </button>
-            )}
-            {currentView !== 'calendar' && (
-              <button 
-                onClick={() => handleNav('calendar')} 
-                className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
-              >
-                <CalendarIcon className="w-4 h-4" /> <span>Calendar</span>
-              </button>
-            )}
-            {(user.role === 'admin' || user.role === 'moderator') && currentView !== 'admin' && (
-              <button 
-                onClick={() => handleNav('admin')} 
-                className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
-              >
-                <Shield className="w-4 h-4" /> <span>Admin</span>
-              </button>
-            )}
-            {currentView !== 'profile' && (
-              <button 
-                onClick={() => handleNav('profile')} 
-                className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
-              >
-                <UserIcon className="w-4 h-4" /> <span>Profile</span>
-              </button>
-            )}
-            
-            <button 
-              onClick={toggleDarkMode}
-              className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
-              title={darkMode ? "Switch to light mode" : "Switch to dark mode"}
-            >
-              {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              <span>Theme</span>
-            </button>
-
-            {onHelp && (
-              <button 
-                onClick={onHelp}
-                className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1"
-                title="Help"
-              >
-                <HelpCircle className="w-4 h-4" />
-                <span>Help</span>
-              </button>
-            )}
-            
-            <button 
-              onClick={onLogout}
-              className="text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 flex items-center gap-1 ml-2"
-            >
-              <LogOut className="w-4 h-4" /> <span>Logout</span>
-            </button>
-          </nav>
-
-          {/* Mobile Menu Toggle */}
-          <button
-            className="md:hidden p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          >
-            {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
-        </div>
-      </div>
-
-      {/* Mobile Dropdown Menu */}
-      {isMobileMenuOpen && (
-        <div ref={menuRef} className="md:hidden absolute top-16 right-4 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-2 flex flex-col z-40">
-          {currentView !== 'dashboard' && (
-            <button 
               onClick={() => handleNav('dashboard')} 
               className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
             >
@@ -209,6 +140,7 @@ export default function Header({ user, currentView, onNavigate, onLogout, darkMo
           </button>
         </div>
       )}
+      </div>
     </header>
   );
 }

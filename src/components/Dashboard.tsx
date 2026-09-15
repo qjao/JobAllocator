@@ -427,7 +427,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
           </div>
           
           {/* Today Button attached to the right of the picker without throwing off center balance */}
-          <div className="absolute left-full ml-2 flex items-center shrink-0">
+          <div className="absolute left-full ml-1 sm:ml-2 hidden min-[430px]:flex items-center shrink-0">
             <button
               onClick={() => setSelectedDate(getLondonDate())}
               className={cn(
