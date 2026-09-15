@@ -48,17 +48,19 @@ export default function Header({ user, currentView, onNavigate, onLogout, darkMo
           <span className="hidden lg:inline">Instructor Job Allocator</span>
         </div>
 
-        {/* Right Area: Wraps Date Picker and Nav */}
-        <div className="flex flex-1 items-center justify-end gap-2 sm:gap-4 h-full relative">
-          {/* Centered Children (Absolute) */}
-          {children && (
-            <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center z-0 w-max max-w-full">
+        {/* Centered Children (Absolute in the whole header) */}
+        {children && (
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center z-0 w-max max-w-full pointer-events-none">
+            <div className="pointer-events-auto">
               {children}
             </div>
-          )}
+          </div>
+        )}
 
+        {/* Right Area: Nav */}
+        <div className="flex items-center justify-end gap-2 sm:gap-4 h-full relative z-10">
           {/* Nav / Hamburger */}
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0 z-10">
+          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
             {/* Menu Toggle (always visible) */}
             <button
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
