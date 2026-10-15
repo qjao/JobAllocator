@@ -26,9 +26,11 @@ COPY package*.json ./
 # Install production dependencies only
 RUN npm install --omit=dev
 
-# Copy built assets and server file from builder
+# Copy built assets, server files, and TypeScript config from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.ts ./server.ts
+COPY --from=builder /app/emailService.ts ./emailService.ts
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
 # Install tsx globally to run the server
 RUN npm install -g tsx
