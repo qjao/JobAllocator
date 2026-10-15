@@ -9,11 +9,26 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
 import { XMLParser } from 'fast-xml-parser';
+import { sendPasswordResetEmail, sendNewRegistrationAlert, isSmtpConfigured } from './emailService';
 
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-in-prod';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'your@admin.com';
 const PUBLIC_URL = process.env.PUBLIC_URL || 'localhost';
+
+function getClientBaseUrl(req: express.Request): string {
+  if (process.env.APP_URL && process.env.APP_URL.trim().length > 0 && process.env.APP_URL !== 'MY_APP_URL') {
+    return process.env.APP_URL.trim();
+  }
+  if (process.env.PUBLIC_URL && process.env.PUBLIC_URL !== 'localhost') {
+    return process.env.PUBLIC_URL;
+  }
+  const origin = req.headers.origin as string;
+  if (origin) return origin;
+  const host = req.headers.host;
+  const proto = (req.headers['x-forwarded-proto'] as string) || 'http';
+  return `${proto}://${host || 'localhost:3000'}`;
+}
 
 // Ensure data directory exists
 const dataDir = path.join(process.cwd(), 'data');
@@ -141,6 +156,15 @@ async function startServer() {
       stmt.run(id, email, hashedPassword, name, role, isApproved);
       
       if (!isApproved) {
+        const baseUrl = getClientBaseUrl(req);
+        sendNewRegistrationAlert({
+          adminEmail: ADMIN_EMAIL,
+          newUser: { id, name: name || 'New Instructor', email },
+          baseUrl,
+        }).catch((err) => {
+          console.error('[Registration Alert] Notification error:', err);
+        });
+
         return res.status(201).json({ message: 'Registration successful. Pending admin approval.' });
       }
 
@@ -312,6 +336,56 @@ async function startServer() {
     // Create a 24-hour token for password reset
     const resetToken = jwt.sign({ purpose: 'reset-password', userId: targetUser.id }, JWT_SECRET, { expiresIn: '24h' });
     res.json({ token: resetToken });
+  });
+
+  // Public: Self-service request for password recovery link via email
+  app.post('/api/auth/forgot-password', async (req, res) => {
+    const { email } = req.body;
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    try {
+      const user = getDb(req).prepare('SELECT id, email, name FROM users WHERE LOWER(email) = ?').get(normalizedEmail) as any;
+
+      let devResetUrl: string | undefined;
+
+      if (user) {
+        // Create a 1-hour secure reset token
+        const resetToken = jwt.sign(
+          { purpose: 'reset-password', userId: user.id },
+          JWT_SECRET,
+          { expiresIn: '1h' }
+        );
+
+        const baseUrl = getClientBaseUrl(req);
+        const resetUrl = `${baseUrl.replace(/\/$/, '')}/?resetToken=${resetToken}`;
+
+        const result = await sendPasswordResetEmail({
+          to: user.email,
+          name: user.name,
+          resetUrl,
+        });
+
+        if (result.devResetUrl) {
+          devResetUrl = result.devResetUrl;
+        }
+      } else {
+        console.log(`[Forgot Password] Requested for unrecognized email: ${normalizedEmail}`);
+      }
+
+      // Always return a consistent success message for privacy/security
+      res.json({
+        success: true,
+        message: 'If an account exists with that email address, a password reset link has been dispatched.',
+        devResetUrl,
+        isDev: !isSmtpConfigured(),
+      });
+    } catch (err: any) {
+      console.error('[Forgot Password Error]:', err);
+      res.status(500).json({ error: 'Unable to process your request at this time.' });
+    }
   });
 
   // Public: Reset password with token

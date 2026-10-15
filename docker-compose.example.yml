@@ -11,5 +11,14 @@ services:
       - NODE_ENV=production
       - JWT_SECRET=change_this_secret_in_production
       - PUBLIC_URL=https://public.url.com
+      # Administrator email for receiving registration notifications and automatic admin privileges
+      - ADMIN_EMAIL=admin@example.com
+      # SMTP Email Delivery Configuration (Used for password recovery and registration alerts)
+      - SMTP_HOST=smtp.example.com
+      - SMTP_PORT=587
+      - SMTP_SECURE=false
+      - SMTP_USER=smtp_username_or_apikey
+      - SMTP_PASS=smtp_password_or_token
+      - SMTP_FROM="Instructor Job Allocator" <noreply@example.com>
     volumes:
       - ./data:/app/data

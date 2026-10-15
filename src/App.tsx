@@ -88,7 +88,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <Auth onLogin={setUser} onStartDemo={handleStartDemo} darkMode={darkMode} toggleDarkMode={toggleDarkMode} />;
+    return <Auth onLogin={setUser} onStartDemo={handleStartDemo} darkMode={darkMode} toggleDarkMode={toggleDarkMode} onResetToken={setResetToken} />;
   }
 
   const handleLogout = () => {
