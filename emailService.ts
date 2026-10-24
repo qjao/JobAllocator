@@ -264,3 +264,99 @@ Instructor Job Allocator System`;
     return { delivered: false, error: error.message };
   }
 }
+
+export interface InstructorApprovalAlertOptions {
+  to: string;
+  name?: string;
+  baseUrl: string;
+}
+
+/**
+ * Sends an email notification to the instructor when their account is approved for the first time.
+ */
+export async function sendInstructorApprovedEmail({ to, name, baseUrl }: InstructorApprovalAlertOptions): Promise<{ delivered: boolean; error?: string }> {
+  const recipientName = name || 'Instructor';
+  const transporter = getTransporter();
+  const loginUrl = `${baseUrl.replace(/\/$/, '')}/`;
+
+  if (!transporter) {
+    console.log('\n===============================================================');
+    console.log(' [DEV / NO SMTP CONFIGURED] Instructor Account Approved Notification');
+    console.log(` To: ${recipientName} <${to}>`);
+    console.log(` Action: Instructor account approved. They can now log in at ${loginUrl}`);
+    console.log('===============================================================\n');
+    return { delivered: false };
+  }
+
+  const from = getSenderAddress();
+  const subject = 'Your Account Has Been Approved - Instructor Job Allocator';
+
+  const textBody = `Hello ${recipientName},
+
+Great news! Your account on Instructor Job Allocator has been approved by the administrator.
+
+You can now log in with your registered email and password to access diagrams, view and allocate jobs:
+${loginUrl}
+
+Best regards,
+Instructor Job Allocator Team`;
+
+  const htmlBody = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Account Approved</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 24px; }
+    .card { max-width: 540px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 32px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); }
+    .badge { display: inline-block; padding: 4px 10px; background-color: #ecfdf5; color: #047857; border-radius: 9999px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px; }
+    h1 { font-size: 20px; font-weight: 700; color: #0f172a; margin: 0 0 16px 0; }
+    p { font-size: 15px; line-height: 1.6; color: #475569; margin: 0 0 16px 0; }
+    .button-container { margin: 28px 0; text-align: center; }
+    .button { display: inline-block; background-color: #059669; color: #ffffff !important; text-decoration: none; font-weight: 600; font-size: 15px; padding: 12px 28px; border-radius: 8px; box-shadow: 0 2px 4px rgba(5, 150, 105, 0.2); }
+    .button:hover { background-color: #047857; }
+    .break-word { word-break: break-all; color: #64748b; font-size: 13px; margin-top: 20px; padding: 12px; background: #f1f5f9; border-radius: 6px; }
+    .footer { margin-top: 32px; padding-top: 20px; border-top: 1px solid #e2e8f0; font-size: 13px; color: #94a3b8; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">Account Approved</span>
+    <h1>Welcome to Instructor Job Allocator</h1>
+    <p>Hello <strong>${recipientName}</strong>,</p>
+    <p>Your registration request has been reviewed and approved by an administrator. Your account is now fully active.</p>
+    <p>You can sign in now to browse diagrams and book your allocations.</p>
+    
+    <div class="button-container">
+      <a href="${loginUrl}" class="button" target="_blank" rel="noopener noreferrer">Sign In to Allocator</a>
+    </div>
+
+    <div class="break-word">
+      Button not working? Copy and paste this URL into your browser:<br>
+      <a href="${loginUrl}" style="color: #059669;">${loginUrl}</a>
+    </div>
+
+    <div class="footer">
+      &copy; ${new Date().getFullYear()} Instructor Job Allocator. All rights reserved.
+    </div>
+  </div>
+</body>
+</html>`;
+
+  try {
+    await transporter.sendMail({
+      from,
+      to,
+      subject,
+      text: textBody,
+      html: htmlBody,
+    });
+    console.log(`[SMTP] Account approval email delivered successfully to ${to}`);
+    return { delivered: true };
+  } catch (error: any) {
+    console.error(`[SMTP ERROR] Failed to send approval email to ${to}:`, error.message);
+    return { delivered: false, error: error.message };
+  }
+}

@@ -9,8 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
 import { XMLParser } from 'fast-xml-parser';
-import { sendPasswordResetEmail, sendNewRegistrationAlert, isSmtpConfigured } from './emailService';
-
+import { sendPasswordResetEmail, sendNewRegistrationAlert, sendInstructorApprovedEmail, isSmtpConfigured } from './emailService';
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-in-prod';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'your@admin.com';
@@ -50,7 +49,9 @@ function initDb(database) {
       password TEXT,
       name TEXT,
       role TEXT DEFAULT 'instructor',
-      isApproved INTEGER DEFAULT 0
+      isApproved INTEGER DEFAULT 0,
+      approval_email_sent INTEGER DEFAULT 0,
+      last_login_at TEXT
     );
     CREATE TABLE IF NOT EXISTS allocations (
       id TEXT PRIMARY KEY,
@@ -72,9 +73,16 @@ function initDb(database) {
   `);
   try {
     database.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'instructor'");
+  } catch (e) {}
+  try {
     database.exec("ALTER TABLE users ADD COLUMN isApproved INTEGER DEFAULT 0");
-  } catch (e) {
-  }
+  } catch (e) {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN approval_email_sent INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
+  } catch (e) {}
 }
 
 initDb(db);
@@ -152,8 +160,8 @@ async function startServer() {
         isApproved = 1;
       }
 
-      const stmt = getDb(req).prepare('INSERT INTO users (id, email, password, name, role, isApproved) VALUES (?, ?, ?, ?, ?, ?)');
-      stmt.run(id, email, hashedPassword, name, role, isApproved);
+      const stmt = getDb(req).prepare('INSERT INTO users (id, email, password, name, role, isApproved, approval_email_sent) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      stmt.run(id, email, hashedPassword, name, role, isApproved, isApproved ? 1 : 0);
       
       if (!isApproved) {
         const baseUrl = getClientBaseUrl(req);
@@ -184,7 +192,8 @@ async function startServer() {
     const id = uuidv4();
     const name = `Demo User ${id.substring(0,4)}`;
     const email = `demo-${id}@example.com`;
-    demoDb.prepare('INSERT INTO users (id, email, password, name, role, isApproved) VALUES (?, ?, ?, ?, ?, ?)').run(id, email, '', name, 'admin', 1);
+    const nowIso = new Date().toISOString();
+    demoDb.prepare('INSERT INTO users (id, email, password, name, role, isApproved, approval_email_sent, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, email, '', name, 'admin', 1, 1, nowIso);
     
     // Create some initial allocations for demo users
     const today = new Date('2026-09-12T12:00:00Z');
@@ -199,7 +208,7 @@ async function startServer() {
     }
     
     const token = jwt.sign({ id, email, name, role: 'admin', isApproved: true, isDemo: true }, JWT_SECRET);
-    res.json({ token, user: { id, email, name, role: 'admin', isApproved: true, isDemo: true } });
+    res.json({ token, user: { id, email, name, role: 'admin', isApproved: true, isDemo: true, lastLoginAt: nowIso, last_login_at: nowIso } });
   });
 
   
@@ -217,8 +226,22 @@ async function startServer() {
         return res.status(401).json({ error: 'Account pending approval by an administrator.' });
       }
 
+      const nowIso = new Date().toISOString();
+      getDb(req).prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(nowIso, user.id);
+
       const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role, isApproved: Boolean(user.isApproved) }, JWT_SECRET);
-      res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role, isApproved: Boolean(user.isApproved) } });
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          isApproved: Boolean(user.isApproved),
+          lastLoginAt: nowIso,
+          last_login_at: nowIso
+        }
+      });
     } catch (error: any) {
       console.error('Login error:', error);
       res.status(500).json({ error: 'Internal server error during login' });
@@ -227,9 +250,33 @@ async function startServer() {
 
   // Auth: Me
   app.get('/api/auth/me', authenticateToken, (req: any, res) => {
-    const user = getDb(req).prepare('SELECT id, email, name, role, isApproved FROM users WHERE id = ?').get(req.user.id) as any;
+    const user = getDb(req).prepare(`
+      SELECT u.id, u.email, u.name, u.role, u.isApproved, u.approval_email_sent, u.last_login_at,
+        (
+          SELECT MAX(COALESCE(a.updatedAt, a.createdAt))
+          FROM allocations a
+          WHERE a.instructorId = u.id OR (a.instructorId IS NULL AND a.instructorName = u.name)
+        ) AS last_allocation_at
+      FROM users u
+      WHERE u.id = ?
+    `).get(req.user.id) as any;
+
     if (!user || !user.isApproved) return res.status(401).json({ error: 'Account not approved' });
-    res.json({ user: { ...user, isApproved: Boolean(user.isApproved) } });
+    const lastAllocIso = user.last_allocation_at ? new Date(user.last_allocation_at).toISOString() : null;
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        isApproved: Boolean(user.isApproved),
+        approval_email_sent: Boolean(user.approval_email_sent),
+        lastLoginAt: user.last_login_at || null,
+        lastAllocationAt: lastAllocIso,
+        last_login_at: user.last_login_at || null,
+        last_allocation_at: lastAllocIso
+      }
+    });
   });
 
   // User: Update Profile
@@ -270,7 +317,23 @@ async function startServer() {
 
   // Admin: Users Management
   app.get('/api/admin/users', authenticateToken, requireAdminOrModerator, (req, res) => {
-    const users = getDb(req).prepare('SELECT id, email, name, role, isApproved FROM users ORDER BY name ASC').all() as any[];
+    const users = getDb(req).prepare(`
+      SELECT 
+        u.id, 
+        u.email, 
+        u.name, 
+        u.role, 
+        u.isApproved, 
+        u.approval_email_sent,
+        u.last_login_at,
+        (
+          SELECT MAX(COALESCE(a.updatedAt, a.createdAt)) 
+          FROM allocations a 
+          WHERE a.instructorId = u.id OR (a.instructorId IS NULL AND a.instructorName = u.name)
+        ) AS last_allocation_at
+      FROM users u 
+      ORDER BY u.name ASC
+    `).all() as any[];
     
     const now = Date.now();
     const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -292,20 +355,64 @@ async function startServer() {
 
     res.json(users.map(u => {
       const uStats = statsMap.get(u.id) || { hour: 0, day: 0, month: 0 };
+      const lastAllocIso = u.last_allocation_at ? new Date(u.last_allocation_at).toISOString() : null;
       return { 
         ...u, 
         isApproved: Boolean(u.isApproved),
+        approval_email_sent: Boolean(u.approval_email_sent),
+        lastLoginAt: u.last_login_at || null,
+        lastAllocationAt: lastAllocIso,
+        last_login_at: u.last_login_at || null,
+        last_allocation_at: lastAllocIso,
         apiStats: uStats
       };
     }));
   });
 
-  app.put('/api/admin/users/:id', authenticateToken, requireAdminOrModerator, (req: any, res) => {
+  // Users route returning list with last login and last allocation timestamps
+  app.get('/api/users', authenticateToken, (req: any, res) => {
+    const users = getDb(req).prepare(`
+      SELECT 
+        u.id, 
+        u.email, 
+        u.name, 
+        u.role, 
+        u.isApproved, 
+        u.approval_email_sent,
+        u.last_login_at,
+        (
+          SELECT MAX(COALESCE(a.updatedAt, a.createdAt)) 
+          FROM allocations a 
+          WHERE a.instructorId = u.id OR (a.instructorId IS NULL AND a.instructorName = u.name)
+        ) AS last_allocation_at
+      FROM users u 
+      ORDER BY u.name ASC
+    `).all() as any[];
+
+    res.json(users.map(u => {
+      const lastAllocIso = u.last_allocation_at ? new Date(u.last_allocation_at).toISOString() : null;
+      return {
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        isApproved: Boolean(u.isApproved),
+        approval_email_sent: Boolean(u.approval_email_sent),
+        lastLoginAt: u.last_login_at || null,
+        lastAllocationAt: lastAllocIso,
+        last_login_at: u.last_login_at || null,
+        last_allocation_at: lastAllocIso
+      };
+    }));
+  });
+
+  app.put('/api/admin/users/:id', authenticateToken, requireAdminOrModerator, async (req: any, res) => {
     const { name, email, role, isApproved } = req.body;
     try {
+      const targetUser = getDb(req).prepare('SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE id = ?').get(req.params.id) as any;
+      if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
       if (req.user.role === 'moderator') {
-        const targetUser = getDb(req).prepare('SELECT role FROM users WHERE id = ?').get(req.params.id) as any;
-        if (!targetUser) return res.status(404).json({ error: 'User not found' });
         if (targetUser.role === 'admin' || targetUser.role === 'moderator') {
           return res.status(403).json({ error: 'Moderators cannot modify admins or other moderators' });
         }
@@ -315,6 +422,25 @@ async function startServer() {
         getDb(req).prepare('UPDATE users SET name = ?, email = ?, role = ?, isApproved = ? WHERE id = ?')
           .run(name, email, role, isApproved ? 1 : 0, req.params.id);
       }
+
+      // First-time approval notification with strict idempotency (never send multiple emails)
+      const willBeApproved = Boolean(isApproved);
+      const alreadyNotified = Boolean(targetUser.approval_email_sent);
+
+      if (willBeApproved && !alreadyNotified) {
+        // Mark as sent immediately to prevent double clicks / rapid toggles from sending multiple emails
+        getDb(req).prepare('UPDATE users SET approval_email_sent = 1 WHERE id = ?').run(req.params.id);
+
+        const baseUrl = getClientBaseUrl(req);
+        sendInstructorApprovedEmail({
+          to: email || targetUser.email,
+          name: name || targetUser.name,
+          baseUrl,
+        }).catch((err) => {
+          console.error('[Approval Notification] Delivery error:', err);
+        });
+      }
+
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: 'Update failed. Email might be in use.' });

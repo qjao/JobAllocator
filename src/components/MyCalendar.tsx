@@ -455,7 +455,8 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
               <Loader2 className="w-8 h-8 text-blue-600 dark:text-blue-400 animate-spin" />
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-7 divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-700 transition-colors">
+            <div className="overflow-x-auto">
+              <div className="grid grid-cols-1 md:grid-cols-7 md:min-w-[720px] divide-y md:divide-y-0 md:divide-x divide-slate-200 dark:divide-slate-700 transition-colors">
               {daysInWeek.map((day, i) => {
                 const dayAllocations = getAllocationsForDay(day);
                 const isToday = isSameDay(day, getLondonDate());
@@ -560,6 +561,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                 );
               })}
             </div>
+          </div>
           )}
         </div>
       </main>

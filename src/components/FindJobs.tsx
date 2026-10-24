@@ -313,8 +313,8 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
         </div>
 
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 transition-colors">
-          <form onSubmit={handleSearch} className="flex flex-col sm:flex-row items-end gap-2 sm:gap-3">
-            <div className="flex-1 w-full sm:w-auto min-w-0">
+          <form onSubmit={handleSearch} className="flex flex-col md:flex-row md:items-end gap-3">
+            <div className="flex-1 w-full md:w-auto min-w-0">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 truncate">Origin</label>
               <select
                 value={crs}
@@ -331,7 +331,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
               </select>
             </div>
             
-            <div className="flex-1 w-full sm:w-auto min-w-0">
+            <div className="flex-1 w-full md:w-auto min-w-0">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 truncate">Destination</label>
               <select
                 value={filterCrs}
@@ -348,14 +348,14 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
               </select>
             </div>
             
-            <div className="w-full sm:w-auto">
+            <div className="w-full md:w-auto">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Time</label>
               <div className="flex gap-1.5 sm:gap-2">
                 <input
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full sm:w-[115px] px-1.5 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-sm"
+                  className="w-full sm:w-[125px] px-1.5 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-sm"
                   required
                 />
                 <select
@@ -385,7 +385,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
             <button
               type="submit"
               disabled={loading || !crs.trim()}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 h-[42px] w-full sm:w-auto"
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 h-[42px] w-full md:w-auto shrink-0"
             >
               {loading ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -523,7 +523,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                   </div>
                   
                   {apiStats ? (
-                    <div className="h-64 w-full mt-4">
+                    <div className="h-64 w-full mt-4 min-w-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.2} />

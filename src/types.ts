@@ -4,6 +4,11 @@ export interface User {
   name: string;
   role: 'admin' | 'instructor' | 'moderator';
   isApproved: boolean;
+  approval_email_sent?: boolean;
+  lastLoginAt?: string | null;
+  lastAllocationAt?: string | null;
+  last_login_at?: string | null;
+  last_allocation_at?: string | null;
   apiStats?: {
     hour: number;
     day: number;

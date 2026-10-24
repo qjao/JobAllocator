@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User } from '../types';
-import { Train, LogOut, Home, Shield, Check, X, Edit2, Trash2, Key, Loader2, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Moon, Sun, Calendar as CalendarIcon, User as UserIcon, HelpCircle } from 'lucide-react';
+import { 
+  LogOut, Home, Shield, Check, X, Edit2, Trash2, Key, Loader2, 
+  AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Moon, Sun, 
+  Calendar as CalendarIcon, User as UserIcon, HelpCircle, Users, 
+  UserX, ShieldCheck, GraduationCap
+} from 'lucide-react';
 import HelpModal from './HelpModal';
 
 interface AdminUsersPageProps {
@@ -61,7 +66,8 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
       });
       if (!res.ok) throw new Error('Failed to update user');
       
-      setUsers(users.map(u => u.id === updatedUser.id ? updatedUser : u));
+      setUsers(users.map(u => u.id === updatedUser.id ? { ...u, ...updatedUser } : u));
+      fetchUsers();
       setEditingUser(null);
     } catch (err: any) {
       alert(err.message);
@@ -156,17 +162,57 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
     setSortConfig({ key, direction });
   };
 
+  const formatTimestamp = (timestamp?: string | number | null) => {
+    if (!timestamp) return { display: '—', full: 'No record recorded' };
+    try {
+      const date = new Date(timestamp);
+      if (isNaN(date.getTime())) return { display: '—', full: 'No record recorded' };
+
+      const display = date.toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      }) + ', ' + date.toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+
+      return { display, full: date.toUTCString() };
+    } catch {
+      return { display: '—', full: 'No record recorded' };
+    }
+  };
+
   const sortedUsers = useMemo(() => {
     let sortableUsers = [...users];
     if (sortConfig !== null) {
       sortableUsers.sort((a, b) => {
-        const aValue = a[sortConfig.key];
-        const bValue = b[sortConfig.key];
-        
-        if (aValue < bValue) {
+        const aVal = a[sortConfig.key];
+        const bVal = b[sortConfig.key];
+
+        if (aVal == null && bVal == null) return 0;
+        if (aVal == null) return 1;
+        if (bVal == null) return -1;
+
+        if (sortConfig.key === 'lastLoginAt' || sortConfig.key === 'lastAllocationAt' || sortConfig.key === 'last_login_at' || sortConfig.key === 'last_allocation_at') {
+          const aTime = new Date(aVal as string).getTime();
+          const bTime = new Date(bVal as string).getTime();
+          if (isNaN(aTime) && isNaN(bTime)) return 0;
+          if (isNaN(aTime)) return 1;
+          if (isNaN(bTime)) return -1;
+          return sortConfig.direction === 'asc' ? aTime - bTime : bTime - aTime;
+        }
+
+        if (typeof aVal === 'string' && typeof bVal === 'string') {
+          const comp = aVal.localeCompare(bVal);
+          return sortConfig.direction === 'asc' ? comp : -comp;
+        }
+
+        if (aVal < bVal) {
           return sortConfig.direction === 'asc' ? -1 : 1;
         }
-        if (aValue > bValue) {
+        if (aVal > bVal) {
           return sortConfig.direction === 'asc' ? 1 : -1;
         }
         return 0;
@@ -183,6 +229,28 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
       return <ArrowUp className="w-4 h-4 ml-1 inline-block text-blue-600" />;
     }
     return <ArrowDown className="w-4 h-4 ml-1 inline-block text-blue-600" />;
+  };
+
+  const getRoleTextColor = (role?: string) => {
+    switch (role) {
+      case 'admin':
+        return 'text-purple-600 dark:text-purple-400';
+      case 'moderator':
+        return 'text-emerald-600 dark:text-emerald-400';
+      default:
+        return 'text-blue-600 dark:text-blue-400';
+    }
+  };
+
+  const renderRolePositionSymbol = (role?: string) => {
+    switch (role) {
+      case 'admin':
+        return <Shield className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" title="Admin" />;
+      case 'moderator':
+        return <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" title="Moderator" />;
+      default:
+        return <GraduationCap className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" title="Instructor" />;
+    }
   };
 
   return (
@@ -204,9 +272,130 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
           </div>
         ) : (
           <>
-            <div className="flex items-center justify-between mb-8">
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">User Management</h1>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">User Management</h1>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                  Overview of all registered platform instructors and administrators.
+                </p>
+              </div>
             </div>
+
+            {/* Total Users and Pending Approval Counter */}
+            {(() => {
+              const totalCount = users.length;
+              const pendingCount = users.filter(u => !u.isApproved).length;
+              const instructorCount = users.filter(u => u.role === 'instructor').length;
+              const adminCount = users.filter(u => u.role === 'admin').length;
+              const moderatorCount = users.filter(u => u.role === 'moderator').length;
+              const pendingInstructors = users.filter(u => !u.isApproved && u.role === 'instructor').length;
+
+              return (
+                <div className="grid grid-cols-2 gap-2.5 sm:gap-4 mb-6">
+                  {/* Total Users with Breakdown */}
+                  <div className="bg-white dark:bg-slate-800 rounded-xl p-3 sm:p-4 border border-slate-200 dark:border-slate-700 shadow-sm transition-colors flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="text-[10px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider truncate">
+                          Total Users
+                        </span>
+                        <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-md bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                          <Users className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        </div>
+                      </div>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 tabular-nums">
+                          {totalCount}
+                        </span>
+                        <span className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-500 font-medium">
+                          registered
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Breakdown by user role */}
+                    <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/60 flex flex-wrap items-center gap-1.5 text-[10px] sm:text-xs">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"></span>
+                        <strong className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{instructorCount}</strong>
+                        <span>Inst</span>
+                      </span>
+
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0"></span>
+                        <strong className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{adminCount}</strong>
+                        <span>Admin</span>
+                      </span>
+
+                      {moderatorCount > 0 && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                          <strong className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{moderatorCount}</strong>
+                          <span>Mod</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Pending Approval */}
+                  <div className={`rounded-xl p-3 sm:p-4 border shadow-sm transition-colors flex flex-col justify-between ${
+                    pendingCount > 0 
+                      ? 'bg-amber-50/70 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800/50' 
+                      : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'
+                  }`}>
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className={`text-[10px] sm:text-xs font-semibold uppercase tracking-wider truncate ${
+                          pendingCount > 0 ? 'text-amber-800 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'
+                        }`}>
+                          Pending Approval
+                        </span>
+                        <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-md flex items-center justify-center shrink-0 ${
+                          pendingCount > 0 
+                            ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400' 
+                            : 'bg-slate-100 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400'
+                        }`}>
+                          <UserX className="w-3.5 h-3.5" />
+                        </div>
+                      </div>
+                      <div className="flex items-baseline gap-1.5">
+                        <span className={`text-xl sm:text-2xl font-bold tracking-tight tabular-nums ${
+                          pendingCount > 0 ? 'text-amber-900 dark:text-amber-200' : 'text-slate-900 dark:text-slate-100'
+                        }`}>
+                          {pendingCount}
+                        </span>
+                        {pendingCount > 0 ? (
+                          <span className="text-[10px] sm:text-xs font-medium text-amber-700 dark:text-amber-300 truncate">
+                            action needed
+                          </span>
+                        ) : (
+                          <span className="text-[10px] sm:text-xs text-slate-400 dark:text-slate-500 font-medium truncate">
+                            all clear
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Status subtext */}
+                    <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-[10px] sm:text-xs">
+                      <span className={`truncate font-medium ${
+                        pendingCount > 0 ? 'text-amber-800 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'
+                      }`}>
+                        {pendingCount > 0 
+                          ? `${pendingInstructors} awaiting`
+                          : 'All authorized'
+                        }
+                      </span>
+                      {pendingCount > 0 && (
+                        <span className="hidden min-[480px]:inline text-[10px] text-amber-700/80 dark:text-amber-400/80 shrink-0 ml-1">
+                          Approve below
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {error && (
               <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-3 text-red-700 dark:text-red-400 transition-colors">
@@ -217,45 +406,86 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
 
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors">
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 dark:bg-slate-700/50 border-b border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 transition-colors">
                 <tr>
-                  <th className="px-6 py-4 font-medium cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('name')}>
+                  <th className="px-5 py-4 font-medium whitespace-nowrap cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('name')}>
                     <div className="flex items-center">Name {renderSortIcon('name')}</div>
                   </th>
-                  <th className="px-6 py-4 font-medium cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('email')}>
+                  <th className="px-5 py-4 font-medium whitespace-nowrap cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('email')}>
                     <div className="flex items-center">Email {renderSortIcon('email')}</div>
                   </th>
-                  <th className="px-6 py-4 font-medium cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('role')}>
-                    <div className="flex items-center">Role {renderSortIcon('role')}</div>
+                  <th className="px-5 py-4 font-medium whitespace-nowrap cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('lastLoginAt')}>
+                    <div className="flex items-center">Last Login {renderSortIcon('lastLoginAt')}</div>
                   </th>
-                  <th className="px-6 py-4 font-medium cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('isApproved')}>
-                    <div className="flex items-center">Status {renderSortIcon('isApproved')}</div>
+                  <th className="px-5 py-4 font-medium whitespace-nowrap cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('lastAllocationAt')}>
+                    <div className="flex items-center">Last Allocation {renderSortIcon('lastAllocationAt')}</div>
                   </th>
-                  <th className="px-6 py-4 font-medium">
+                  <th className="px-5 py-4 font-medium whitespace-nowrap">
                     <div className="flex items-center">API Usage (1h/24h/30d)</div>
                   </th>
                   {user.role === 'admin' && (
-                    <th className="px-6 py-4 font-medium text-right">Actions</th>
+                    <th className="px-5 py-4 font-medium whitespace-nowrap text-right">Actions</th>
                   )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                 {sortedUsers.map((u) => (
                   <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors">
-                    <td className="px-6 py-4">
+                    <td className="px-5 py-4 whitespace-nowrap">
                       {editingUser?.id === u.id && user.role === 'admin' ? (
-                        <input
-                          type="text"
-                          value={editingUser.name}
-                          onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
-                          className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-slate-100 transition-colors"
-                        />
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={editingUser.name}
+                            onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
+                            className="px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-slate-100 text-sm transition-colors"
+                            placeholder="Name"
+                          />
+                          <select
+                            value={editingUser.role}
+                            onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value as 'admin' | 'instructor' | 'moderator' })}
+                            className="px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-slate-100 text-xs transition-colors"
+                          >
+                            <option value="instructor">Instructor</option>
+                            <option value="moderator">Moderator</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        </div>
                       ) : (
-                        <span className="font-medium text-slate-900 dark:text-slate-100">{u.name}</span>
+                        <div className="flex items-center gap-2">
+                          {/* Symbol representing their position on the left */}
+                          <span className="flex items-center shrink-0" title={u.role ? u.role.charAt(0).toUpperCase() + u.role.slice(1) : ''}>
+                            {renderRolePositionSymbol(u.role)}
+                          </span>
+
+                          {/* Name colored with their role color */}
+                          <span className={`font-semibold ${getRoleTextColor(u.role)}`}>
+                            {u.name}
+                          </span>
+
+                          {/* Approved / Pending icon on the right */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleApproval(u)}
+                            disabled={actionLoading || u.id === user.id || (user.role === 'moderator' && (u.role === 'admin' || u.role === 'moderator'))}
+                            className={`inline-flex items-center justify-center p-0.5 rounded transition-colors ${
+                              u.isApproved 
+                                ? 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/40' 
+                                : 'text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40'
+                            } ${actionLoading || u.id === user.id || (user.role === 'moderator' && (u.role === 'admin' || u.role === 'moderator')) ? 'opacity-80 cursor-default' : 'cursor-pointer'}`}
+                            title={u.isApproved ? "Approved (click to toggle)" : "Pending (click to approve)"}
+                          >
+                            {u.isApproved ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                            ) : (
+                              <Loader2 className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                            )}
+                          </button>
+                        </div>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
+                    <td className="px-5 py-4 text-slate-600 dark:text-slate-300 whitespace-nowrap">
                       {editingUser?.id === u.id && user.role === 'admin' ? (
                         <input
                           type="email"
@@ -264,43 +494,33 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                           className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-slate-100 transition-colors"
                         />
                       ) : (
-                        u.email
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      {editingUser?.id === u.id && user.role === 'admin' ? (
-                        <select
-                          value={editingUser.role}
-                          onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value as 'admin' | 'instructor' | 'moderator' })}
-                          className="w-full px-2 py-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded text-slate-900 dark:text-slate-100 transition-colors"
-                        >
-                          <option value="instructor">Instructor</option>
-                          <option value="moderator">Moderator</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      ) : (
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize transition-colors ${
-                          u.role === 'admin' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-400' : u.role === 'moderator' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400'
-                        }`}>
-                          {u.role}
+                        <span title={u.email} className={u.email && u.email.length > 30 ? "cursor-help" : ""}>
+                          {u.email && u.email.length > 30 ? `${u.email.slice(0, 30)}…` : u.email}
                         </span>
                       )}
                     </td>
-                    <td className="px-6 py-4">
-                      <button
-                        onClick={() => handleToggleApproval(u)}
-                        disabled={actionLoading || u.id === user.id || (user.role === 'moderator' && (u.role === 'admin' || u.role === 'moderator'))}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                          u.isApproved 
-                            ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50' 
-                            : 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-400 hover:bg-amber-200 dark:hover:bg-amber-900/50'
-                        } ${actionLoading || u.id === user.id || (user.role === 'moderator' && (u.role === 'admin' || u.role === 'moderator')) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        {u.isApproved ? <Check className="w-3.5 h-3.5" /> : <Loader2 className="w-3.5 h-3.5" />}
-                        {u.isApproved ? 'Approved' : 'Pending'}
-                      </button>
+
+                    <td className="px-5 py-4 text-xs font-medium text-slate-600 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                      {(() => {
+                        const { display, full } = formatTimestamp(u.lastLoginAt || u.last_login_at);
+                        return (
+                          <span title={full} className={display === '—' ? 'text-slate-400 dark:text-slate-500' : ''}>
+                            {display}
+                          </span>
+                        );
+                      })()}
                     </td>
-                    <td className="px-6 py-4 text-slate-600 dark:text-slate-300 font-mono text-sm">
+                    <td className="px-5 py-4 text-xs font-medium text-slate-600 dark:text-slate-300 tabular-nums whitespace-nowrap">
+                      {(() => {
+                        const { display, full } = formatTimestamp(u.lastAllocationAt || u.last_allocation_at);
+                        return (
+                          <span title={full} className={display === '—' ? 'text-slate-400 dark:text-slate-500' : ''}>
+                            {display}
+                          </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="px-5 py-4 text-slate-600 dark:text-slate-300 font-mono text-xs tabular-nums whitespace-nowrap">
                       {u.apiStats ? (
                         <div className="flex items-center gap-1">
                           <span className={u.apiStats.hour > 0 ? "text-indigo-600 dark:text-indigo-400 font-semibold" : ""}>{u.apiStats.hour}</span>
@@ -314,7 +534,7 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                       )}
                     </td>
                     {user.role === 'admin' && (
-                      <td className="px-6 py-4 text-right">
+                      <td className="px-5 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
                           {editingUser?.id === u.id ? (
                             <>
@@ -372,7 +592,7 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                 ))}
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-slate-500 dark:text-slate-400">
+                    <td colSpan={user.role === 'admin' ? 6 : 5} className="px-6 py-8 text-center text-slate-500 dark:text-slate-400">
                       No users found.
                     </td>
                   </tr>

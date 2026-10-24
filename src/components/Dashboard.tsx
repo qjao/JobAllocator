@@ -459,7 +459,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
 
           {/* Right Column: List */}
           <div className="lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
             <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Allocations for {format(selectedDate, 'MMM d')}</h2>
             <div className="flex items-center gap-4">
               <label className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300 cursor-pointer select-none">
