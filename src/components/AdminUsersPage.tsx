@@ -186,8 +186,16 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
 
   const sortedUsers = useMemo(() => {
     let sortableUsers = [...users];
-    if (sortConfig !== null) {
-      sortableUsers.sort((a, b) => {
+
+    sortableUsers.sort((a, b) => {
+      // Pending approval users are always prioritized at the top of the list
+      const aPending = !a.isApproved;
+      const bPending = !b.isApproved;
+      if (aPending !== bPending) {
+        return aPending ? -1 : 1;
+      }
+
+      if (sortConfig !== null) {
         const aVal = a[sortConfig.key];
         const bVal = b[sortConfig.key];
 
@@ -216,8 +224,11 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
           return sortConfig.direction === 'asc' ? 1 : -1;
         }
         return 0;
-      });
-    }
+      }
+
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
     return sortableUsers;
   }, [users, sortConfig]);
 
@@ -231,7 +242,10 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
     return <ArrowDown className="w-4 h-4 ml-1 inline-block text-blue-600" />;
   };
 
-  const getRoleTextColor = (role?: string) => {
+  const getRoleTextColor = (role?: string, isApproved?: boolean) => {
+    if (!isApproved) {
+      return 'text-amber-600 dark:text-amber-400';
+    }
     switch (role) {
       case 'admin':
         return 'text-purple-600 dark:text-purple-400';
@@ -242,14 +256,22 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
     }
   };
 
-  const renderRolePositionSymbol = (role?: string) => {
+  const renderRolePositionSymbol = (role?: string, isApproved?: boolean) => {
+    const colorClass = !isApproved 
+      ? 'text-amber-600 dark:text-amber-400' 
+      : (role === 'admin' 
+          ? 'text-purple-600 dark:text-purple-400' 
+          : role === 'moderator' 
+            ? 'text-emerald-600 dark:text-emerald-400' 
+            : 'text-blue-600 dark:text-blue-400');
+
     switch (role) {
       case 'admin':
-        return <Shield className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0" title="Admin" />;
+        return <Shield className={`w-3.5 h-3.5 ${colorClass} shrink-0`} title="Admin" />;
       case 'moderator':
-        return <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" title="Moderator" />;
+        return <ShieldCheck className={`w-3.5 h-3.5 ${colorClass} shrink-0`} title="Moderator" />;
       default:
-        return <GraduationCap className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" title="Instructor" />;
+        return <GraduationCap className={`w-3.5 h-3.5 ${colorClass} shrink-0`} title="Instructor" />;
     }
   };
 
@@ -313,27 +335,25 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                       </div>
                     </div>
 
-                    {/* Breakdown by user role */}
+                    {/* Breakdown by user role: Admin, Mod, Inst */}
                     <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/60 flex flex-wrap items-center gap-1.5 text-[10px] sm:text-xs">
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"></span>
-                        <strong className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{instructorCount}</strong>
-                        <span>Inst</span>
-                      </span>
-
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
                         <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shrink-0"></span>
                         <strong className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{adminCount}</strong>
                         <span>Admin</span>
                       </span>
 
-                      {moderatorCount > 0 && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
-                          <strong className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{moderatorCount}</strong>
-                          <span>Mod</span>
-                        </span>
-                      )}
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                        <strong className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{moderatorCount}</strong>
+                        <span>Mod</span>
+                      </span>
+
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"></span>
+                        <strong className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">{instructorCount}</strong>
+                        <span>Inst</span>
+                      </span>
                     </div>
                   </div>
 
@@ -456,11 +476,11 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                         <div className="flex items-center gap-2">
                           {/* Symbol representing their position on the left */}
                           <span className="flex items-center shrink-0" title={u.role ? u.role.charAt(0).toUpperCase() + u.role.slice(1) : ''}>
-                            {renderRolePositionSymbol(u.role)}
+                            {renderRolePositionSymbol(u.role, u.isApproved)}
                           </span>
 
-                          {/* Name colored with their role color */}
-                          <span className={`font-semibold ${getRoleTextColor(u.role)}`}>
+                          {/* Name colored with pending amber if pending, or role color if approved */}
+                          <span className={`font-semibold ${getRoleTextColor(u.role, u.isApproved)}`}>
                             {u.name}
                           </span>
 
