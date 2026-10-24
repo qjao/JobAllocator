@@ -121,14 +121,11 @@ export default function Header({ user, currentView, onNavigate, onLogout, darkMo
           <div className="flex items-center shrink-0">
             {/* Menu Toggle (always visible) */}
             <button
-              className="relative p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+              className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               aria-label="Toggle navigation menu"
             >
               {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-              {canManageUsers && pendingCount > 0 && !isMobileMenuOpen && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white dark:ring-slate-800" />
-              )}
             </button>
           </div>
         </div>
