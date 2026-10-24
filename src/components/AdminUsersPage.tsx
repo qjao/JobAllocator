@@ -4,7 +4,7 @@ import {
   LogOut, Home, Shield, Check, X, Edit2, Trash2, Key, Loader2, 
   AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Moon, Sun, 
   Calendar as CalendarIcon, User as UserIcon, HelpCircle, Users, 
-  UserX, ShieldCheck, GraduationCap
+  UserX, ShieldCheck, GraduationCap, CheckCheck
 } from 'lucide-react';
 import HelpModal from './HelpModal';
 
@@ -22,6 +22,8 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [bulkSuccessMessage, setBulkSuccessMessage] = useState<string | null>(null);
+  const [showBulkApproveModal, setShowBulkApproveModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
@@ -79,6 +81,44 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
   const handleToggleApproval = async (targetUser: User) => {
     const updatedUser = { ...targetUser, isApproved: !targetUser.isApproved };
     await handleUpdateUser(updatedUser);
+  };
+
+  const eligiblePendingUsers = useMemo(() => {
+    return users.filter(u => {
+      if (u.isApproved) return false;
+      if (user.role === 'moderator') {
+        return u.role === 'instructor';
+      }
+      return true;
+    });
+  }, [users, user.role]);
+
+  const handleBulkApprove = async () => {
+    if (eligiblePendingUsers.length === 0) return;
+    setActionLoading(true);
+    setError(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch('/api/admin/users/bulk-approve', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to bulk approve pending users');
+      }
+      const data = await res.json();
+      setShowBulkApproveModal(false);
+      setBulkSuccessMessage(`Successfully approved ${data.count || eligiblePendingUsers.length} pending user${(data.count || eligiblePendingUsers.length) === 1 ? '' : 's'}.`);
+      setTimeout(() => setBulkSuccessMessage(null), 5000);
+      await fetchUsers();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleDeleteUser = async (id: string) => {
@@ -310,7 +350,6 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
               const instructorCount = users.filter(u => u.role === 'instructor').length;
               const adminCount = users.filter(u => u.role === 'admin').length;
               const moderatorCount = users.filter(u => u.role === 'moderator').length;
-              const pendingInstructors = users.filter(u => !u.isApproved && u.role === 'instructor').length;
 
               return (
                 <div className="grid grid-cols-2 gap-2.5 sm:gap-4 mb-6">
@@ -396,26 +435,40 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                       </div>
                     </div>
 
-                    {/* Status subtext */}
-                    <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between text-[10px] sm:text-xs">
-                      <span className={`truncate font-medium ${
-                        pendingCount > 0 ? 'text-amber-800 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'
-                      }`}>
-                        {pendingCount > 0 
-                          ? `${pendingInstructors} awaiting`
-                          : 'All authorized'
-                        }
-                      </span>
-                      {pendingCount > 0 && (
-                        <span className="hidden min-[480px]:inline text-[10px] text-amber-700/80 dark:text-amber-400/80 shrink-0 ml-1">
-                          Approve below
-                        </span>
-                      )}
-                    </div>
+                    {pendingCount > 0 && (
+                      <div className="mt-2.5 pt-2 border-t border-amber-200/70 dark:border-amber-800/40 flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setShowBulkApproveModal(true)}
+                          disabled={actionLoading || eligiblePendingUsers.length === 0}
+                          className="inline-flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 text-[11px] sm:text-xs font-semibold rounded-md bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
+                          title={`Approve all ${eligiblePendingUsers.length} pending user${eligiblePendingUsers.length === 1 ? '' : 's'} at once`}
+                        >
+                          <CheckCheck className="w-3.5 h-3.5" />
+                          <span>Bulk Approve</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
             })()}
+
+            {bulkSuccessMessage && (
+              <div className="mb-6 p-3.5 sm:p-4 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 rounded-xl flex items-center justify-between gap-3 text-emerald-800 dark:text-emerald-300 transition-colors">
+                <div className="flex items-center gap-2.5">
+                  <CheckCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <p className="text-sm font-medium">{bulkSuccessMessage}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setBulkSuccessMessage(null)}
+                  className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-200 p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
 
             {error && (
               <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-3 text-red-700 dark:text-red-400 transition-colors">
@@ -436,7 +489,7 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                     <div className="flex items-center">Email {renderSortIcon('email')}</div>
                   </th>
                   <th className="px-5 py-4 font-medium whitespace-nowrap cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('lastLoginAt')}>
-                    <div className="flex items-center">Last Login {renderSortIcon('lastLoginAt')}</div>
+                    <div className="flex items-center">Last Access {renderSortIcon('lastLoginAt')}</div>
                   </th>
                   <th className="px-5 py-4 font-medium whitespace-nowrap cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" onClick={() => handleSort('lastAllocationAt')}>
                     <div className="flex items-center">Last Allocation {renderSortIcon('lastAllocationAt')}</div>
@@ -728,6 +781,95 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
           </div>
         </div>
       )}
+
+      {showBulkApproveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-xl max-w-md w-full shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors">
+            <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                  <CheckCheck className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                    Bulk Approve Users
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Approve multiple pending accounts at once
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBulkApproveModal(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 space-y-4">
+              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                You are about to approve <strong className="text-slate-900 dark:text-slate-100">{eligiblePendingUsers.length}</strong> pending user{eligiblePendingUsers.length === 1 ? '' : 's'}. Each user will immediately be granted platform access.
+              </p>
+
+              <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700/60 bg-slate-50/60 dark:bg-slate-900/40">
+                {eligiblePendingUsers.map((u) => (
+                  <div key={u.id} className="px-3 py-2 flex items-center justify-between text-xs">
+                    <div className="min-w-0 pr-2">
+                      <p className="font-semibold text-slate-900 dark:text-slate-100 truncate">{u.name}</p>
+                      <p className="text-slate-500 dark:text-slate-400 truncate">{u.email}</p>
+                    </div>
+                    <span className={`shrink-0 px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                      u.role === 'admin' 
+                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                        : u.role === 'moderator'
+                        ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                    }`}>
+                      {u.role === 'moderator' ? 'Mod' : u.role === 'instructor' ? 'Inst' : 'Admin'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200/60 dark:border-amber-800/40 text-xs text-amber-800 dark:text-amber-300">
+                An onboarding confirmation email will be automatically sent to each approved user who has not received one yet.
+              </div>
+            </div>
+
+            <div className="px-4 sm:px-5 py-3 bg-slate-50 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setShowBulkApproveModal(false)}
+                disabled={actionLoading}
+                className="px-3.5 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkApprove}
+                disabled={actionLoading || eligiblePendingUsers.length === 0}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white shadow-sm transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {actionLoading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Approving...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCheck className="w-3.5 h-3.5" />
+                    <span>Approve All ({eligiblePendingUsers.length})</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showHelpModal && (
         <HelpModal onClose={() => setShowHelpModal(false)} />
       )}

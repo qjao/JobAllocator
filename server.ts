@@ -120,6 +120,23 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Track active user page access and update last access timestamp in database (throttled to 60s)
+  const userAccessThrottle = new Map<string, number>();
+
+  const recordUserAccess = (req: any, userId: string) => {
+    const now = Date.now();
+    const lastTime = userAccessThrottle.get(userId) || 0;
+    if (now - lastTime > 60 * 1000) {
+      userAccessThrottle.set(userId, now);
+      const nowIso = new Date().toISOString();
+      try {
+        getDb(req).prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(nowIso, userId);
+      } catch (err) {
+        console.error('Error updating last access timestamp:', err);
+      }
+    }
+  };
+
   // Auth middleware
   const authenticateToken = (req: any, res: any, next: any) => {
     const authHeader = req.headers['authorization'];
@@ -129,6 +146,9 @@ async function startServer() {
     jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
       if (err) return res.status(401).json({ error: 'Invalid token' });
       req.user = user;
+      if (user && user.id) {
+        recordUserAccess(req, user.id);
+      }
       next();
     });
   };
@@ -173,6 +193,7 @@ async function startServer() {
           console.error('[Registration Alert] Notification error:', err);
         });
 
+        io.emit('users_updated');
         return res.status(201).json({ message: 'Registration successful. Pending admin approval.' });
       }
 
@@ -441,9 +462,65 @@ async function startServer() {
         });
       }
 
+      io.emit('users_updated');
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: 'Update failed. Email might be in use.' });
+    }
+  });
+
+  // Admin & Moderator: Bulk approve pending users
+  app.post('/api/admin/users/bulk-approve', authenticateToken, requireAdminOrModerator, async (req: any, res) => {
+    try {
+      let pendingUsers: any[] = [];
+      if (req.user.role === 'moderator') {
+        // Moderators can only approve instructor accounts
+        pendingUsers = getDb(req).prepare(
+          "SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE (isApproved = 0 OR isApproved IS NULL) AND role = 'instructor'"
+        ).all() as any[];
+      } else {
+        // Admins can approve all pending accounts
+        pendingUsers = getDb(req).prepare(
+          "SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE (isApproved = 0 OR isApproved IS NULL)"
+        ).all() as any[];
+      }
+
+      if (pendingUsers.length === 0) {
+        return res.json({ success: true, count: 0, message: 'No pending users found to approve.' });
+      }
+
+      const updateStmt = getDb(req).prepare('UPDATE users SET isApproved = 1 WHERE id = ?');
+      const markEmailStmt = getDb(req).prepare('UPDATE users SET approval_email_sent = 1 WHERE id = ?');
+
+      const runBulkUpdate = getDb(req).transaction((usersToApprove: any[]) => {
+        for (const u of usersToApprove) {
+          updateStmt.run(u.id);
+          if (!u.approval_email_sent) {
+            markEmailStmt.run(u.id);
+          }
+        }
+      });
+      runBulkUpdate(pendingUsers);
+
+      // Trigger approval notifications asynchronously with idempotency
+      const baseUrl = getClientBaseUrl(req);
+      for (const u of pendingUsers) {
+        if (!u.approval_email_sent) {
+          sendInstructorApprovedEmail({
+            to: u.email,
+            name: u.name,
+            baseUrl,
+          }).catch((err) => {
+            console.error(`[Bulk Approval Notification] Delivery error for ${u.email}:`, err);
+          });
+        }
+      }
+
+      io.emit('users_updated');
+      res.json({ success: true, count: pendingUsers.length });
+    } catch (err: any) {
+      console.error('[Bulk Approve Error]:', err);
+      res.status(500).json({ error: 'Failed to process bulk approval.' });
     }
   });
 
@@ -533,6 +610,7 @@ async function startServer() {
 
   app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
     getDb(req).prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+    io.emit('users_updated');
     res.json({ success: true });
   });
 

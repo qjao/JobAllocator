@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Train, Calendar as CalendarIcon, Shield, User as UserIcon, Sun, Moon, Search, LogOut, Home, HelpCircle, Menu, X } from 'lucide-react';
+import { Train, Calendar as CalendarIcon, Shield, User as UserIcon, Sun, Moon, Search, LogOut, Home, HelpCircle, Menu, X, Bell } from 'lucide-react';
+import { io } from 'socket.io-client';
 import { User } from '../types';
 
 interface HeaderProps {
@@ -15,7 +16,49 @@ interface HeaderProps {
 
 export default function Header({ user, currentView, onNavigate, onLogout, darkMode, toggleDarkMode, onHelp, children }: HeaderProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState<number>(0);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const canManageUsers = user.role === 'admin' || user.role === 'moderator';
+
+  useEffect(() => {
+    if (!canManageUsers) return;
+
+    let isMounted = true;
+    const fetchPendingUsers = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const res = await fetch('/api/admin/users', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && Array.isArray(data)) {
+            const count = data.filter((u: any) => !u.isApproved).length;
+            setPendingCount(count);
+          }
+        }
+      } catch {
+        // silent fail
+      }
+    };
+
+    fetchPendingUsers();
+
+    const socket = io({ auth: { token: localStorage.getItem('token') } });
+    socket.on('users_updated', () => {
+      fetchPendingUsers();
+    });
+
+    const interval = setInterval(fetchPendingUsers, 30000);
+
+    return () => {
+      isMounted = false;
+      socket.disconnect();
+      clearInterval(interval);
+    };
+  }, [user.role, canManageUsers]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -58,90 +101,118 @@ export default function Header({ user, currentView, onNavigate, onLogout, darkMo
         )}
 
         {/* Right Area: Nav */}
-        <div className="flex items-center justify-end gap-2 sm:gap-4 h-full relative z-10">
+        <div className="flex items-center justify-end gap-1.5 sm:gap-3 h-full relative z-10">
+          {/* Notification icon for pending approvals (shown to admins/moderators when pending approvals exist) */}
+          {canManageUsers && pendingCount > 0 && (
+            <button
+              onClick={() => handleNav('admin')}
+              className="relative p-2 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-lg transition-colors flex items-center justify-center group"
+              title={`${pendingCount} pending approval${pendingCount === 1 ? '' : 's'} - Click to review`}
+              aria-label={`${pendingCount} pending user approval${pendingCount === 1 ? '' : 's'}`}
+            >
+              <Bell className="w-5 h-5 transition-transform group-hover:scale-110" />
+              <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white shadow-sm ring-2 ring-white dark:ring-slate-800 animate-pulse">
+                {pendingCount}
+              </span>
+            </button>
+          )}
+
           {/* Nav / Hamburger */}
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+          <div className="flex items-center shrink-0">
             {/* Menu Toggle (always visible) */}
             <button
-              className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+              className="relative p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              aria-label="Toggle navigation menu"
             >
               {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              {canManageUsers && pendingCount > 0 && !isMobileMenuOpen && (
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white dark:ring-slate-800" />
+              )}
             </button>
           </div>
         </div>
 
         {/* Dropdown Menu (always responsive) */}
         {isMobileMenuOpen && (
-          <div ref={menuRef} className="absolute top-16 right-4 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-2 flex flex-col z-40">
+          <div ref={menuRef} className="absolute top-16 right-4 w-52 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-2 flex flex-col z-40">
             {currentView !== 'dashboard' && (
               <button 
-              onClick={() => handleNav('dashboard')} 
-              className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-            >
-              <Home className="w-4 h-4" /> Dashboard
-            </button>
-          )}
-          {currentView !== 'find-jobs' && (
+                onClick={() => handleNav('dashboard')} 
+                className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+              >
+                <Home className="w-4 h-4" /> Dashboard
+              </button>
+            )}
+            {currentView !== 'find-jobs' && (
+              <button 
+                onClick={() => handleNav('find-jobs')} 
+                className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+              >
+                <Search className="w-4 h-4" /> Find Jobs
+              </button>
+            )}
+            {currentView !== 'calendar' && (
+              <button 
+                onClick={() => handleNav('calendar')} 
+                className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+              >
+                <CalendarIcon className="w-4 h-4" /> Calendar
+              </button>
+            )}
+            {canManageUsers && (
+              <button 
+                onClick={() => handleNav('admin')} 
+                className={`px-4 py-2 text-left text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center justify-between ${
+                  currentView === 'admin' ? 'text-blue-600 dark:text-blue-400 font-semibold' : 'text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4" /> Admin
+                </div>
+                {pendingCount > 0 && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 tabular-nums">
+                    {pendingCount}
+                  </span>
+                )}
+              </button>
+            )}
+            {currentView !== 'profile' && (
+              <button 
+                onClick={() => handleNav('profile')} 
+                className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+              >
+                <UserIcon className="w-4 h-4" /> Profile
+              </button>
+            )}
+            
             <button 
-              onClick={() => handleNav('find-jobs')} 
+              onClick={() => { toggleDarkMode(); setIsMobileMenuOpen(false); }}
               className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
             >
-              <Search className="w-4 h-4" /> Find Jobs
+              {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              {darkMode ? 'Light Mode' : 'Dark Mode'}
             </button>
-          )}
-          {currentView !== 'calendar' && (
-            <button 
-              onClick={() => handleNav('calendar')} 
-              className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-            >
-              <CalendarIcon className="w-4 h-4" /> Calendar
-            </button>
-          )}
-          {(user.role === 'admin' || user.role === 'moderator') && currentView !== 'admin' && (
-            <button 
-              onClick={() => handleNav('admin')} 
-              className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-            >
-              <Shield className="w-4 h-4" /> Admin
-            </button>
-          )}
-          {currentView !== 'profile' && (
-            <button 
-              onClick={() => handleNav('profile')} 
-              className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-            >
-              <UserIcon className="w-4 h-4" /> Profile
-            </button>
-          )}
-          
-          <button 
-            onClick={() => { toggleDarkMode(); setIsMobileMenuOpen(false); }}
-            className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-          >
-            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            {darkMode ? 'Light Mode' : 'Dark Mode'}
-          </button>
 
-          {onHelp && (
+            {onHelp && (
+              <button 
+                onClick={() => { onHelp(); setIsMobileMenuOpen(false); }}
+                className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+              >
+                <HelpCircle className="w-4 h-4" /> Help
+              </button>
+            )}
+            
+            <div className="my-1 border-t border-slate-200 dark:border-slate-700"></div>
+            
             <button 
-              onClick={() => { onHelp(); setIsMobileMenuOpen(false); }}
-              className="px-4 py-2 text-left text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+              onClick={() => { onLogout(); setIsMobileMenuOpen(false); }}
+              className="px-4 py-2 text-left text-sm font-medium text-red-600 dark:text-red-400 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
             >
-              <HelpCircle className="w-4 h-4" /> Help
+              <LogOut className="w-4 h-4" /> Logout
             </button>
-          )}
-          
-          <div className="my-1 border-t border-slate-200 dark:border-slate-700"></div>
-          
-          <button 
-            onClick={() => { onLogout(); setIsMobileMenuOpen(false); }}
-            className="px-4 py-2 text-left text-sm font-medium text-red-600 dark:text-red-400 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
-          >
-            <LogOut className="w-4 h-4" /> Logout
-          </button>
-        </div>
-      )}
+          </div>
+        )}
       </div>
     </header>
   );

@@ -56,6 +56,28 @@ export default function App() {
     }
   }, []);
 
+  // Keep Last Access timestamp fresh when user returns to or remains active on the page
+  useEffect(() => {
+    if (!user) return;
+
+    const pingAccess = () => {
+      const token = localStorage.getItem('token');
+      if (token && document.visibilityState === 'visible') {
+        fetch('/api/auth/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }).catch(() => {});
+      }
+    };
+
+    window.addEventListener('focus', pingAccess);
+    const interval = setInterval(pingAccess, 5 * 60 * 1000);
+
+    return () => {
+      window.removeEventListener('focus', pingAccess);
+      clearInterval(interval);
+    };
+  }, [user]);
+
   const handleStartDemo = async () => {
     setLoading(true);
     try {
