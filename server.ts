@@ -10,7 +10,9 @@ import path from 'path';
 import fs from 'fs';
 import { XMLParser } from 'fast-xml-parser';
 import { sendPasswordResetEmail, sendNewRegistrationAlert, sendInstructorApprovedEmail, isSmtpConfigured } from './emailService';
-const PORT = 3000;
+const portArgIndex = process.argv.indexOf('--port');
+const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
+const PORT = cliPort || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-in-prod';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'your@admin.com';
 const PUBLIC_URL = process.env.PUBLIC_URL || 'localhost';
@@ -51,7 +53,9 @@ function initDb(database) {
       role TEXT DEFAULT 'instructor',
       isApproved INTEGER DEFAULT 0,
       approval_email_sent INTEGER DEFAULT 0,
-      last_login_at TEXT
+      last_login_at TEXT,
+      isDummy INTEGER DEFAULT 0,
+      notes TEXT
     );
     CREATE TABLE IF NOT EXISTS allocations (
       id TEXT PRIMARY KEY,
@@ -82,6 +86,12 @@ function initDb(database) {
   } catch (e) {}
   try {
     database.exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
+  } catch (e) {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN isDummy INTEGER DEFAULT 0");
+  } catch (e) {}
+  try {
+    database.exec("ALTER TABLE users ADD COLUMN notes TEXT");
   } catch (e) {}
 }
 
@@ -347,6 +357,8 @@ async function startServer() {
         u.isApproved, 
         u.approval_email_sent,
         u.last_login_at,
+        u.isDummy,
+        u.notes,
         (
           SELECT MAX(COALESCE(a.updatedAt, a.createdAt)) 
           FROM allocations a 
@@ -381,6 +393,8 @@ async function startServer() {
         ...u, 
         isApproved: Boolean(u.isApproved),
         approval_email_sent: Boolean(u.approval_email_sent),
+        isDummy: Boolean(u.isDummy),
+        notes: u.notes || null,
         lastLoginAt: u.last_login_at || null,
         lastAllocationAt: lastAllocIso,
         last_login_at: u.last_login_at || null,
@@ -401,6 +415,8 @@ async function startServer() {
         u.isApproved, 
         u.approval_email_sent,
         u.last_login_at,
+        u.isDummy,
+        u.notes,
         (
           SELECT MAX(COALESCE(a.updatedAt, a.createdAt)) 
           FROM allocations a 
@@ -419,6 +435,8 @@ async function startServer() {
         role: u.role,
         isApproved: Boolean(u.isApproved),
         approval_email_sent: Boolean(u.approval_email_sent),
+        isDummy: Boolean(u.isDummy),
+        notes: u.notes || null,
         lastLoginAt: u.last_login_at || null,
         lastAllocationAt: lastAllocIso,
         last_login_at: u.last_login_at || null,
@@ -427,21 +445,89 @@ async function startServer() {
     }));
   });
 
-  app.put('/api/admin/users/:id', authenticateToken, requireAdminOrModerator, async (req: any, res) => {
-    const { name, email, role, isApproved } = req.body;
+  // Create User Profile (accessible to admins and moderators)
+  const handleCreateUserProfile = (req: any, res: any) => {
     try {
-      const targetUser = getDb(req).prepare('SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE id = ?').get(req.params.id) as any;
+      const { name, email, role } = req.body;
+      if (!name || typeof name !== 'string' || !name.trim()) {
+        return res.status(400).json({ error: 'Name is required for user profile' });
+      }
+
+      const id = uuidv4();
+      const trimmedName = name.trim();
+      const userProfileEmail = (email && typeof email === 'string' && email.trim()) 
+        ? email.trim().toLowerCase() 
+        : `user-${id.substring(0, 8)}@external.placeholder`;
+      const userProfileRole = role === 'driver_manager' ? 'driver_manager' : 'instructor';
+
+      const stmt = getDb(req).prepare(`
+        INSERT INTO users (id, email, password, name, role, isApproved, approval_email_sent, isDummy)
+        VALUES (?, ?, ?, ?, ?, 1, 1, 1)
+      `);
+      stmt.run(id, userProfileEmail, '', trimmedName, userProfileRole);
+
+      io.emit('users_updated');
+      res.status(201).json({
+        success: true,
+        user: {
+          id,
+          name: trimmedName,
+          email: userProfileEmail,
+          role: userProfileRole,
+          isApproved: true,
+          isDummy: true,
+          lastLoginAt: null,
+          lastAllocationAt: null
+        }
+      });
+    } catch (error: any) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+        res.status(400).json({ error: 'Email already exists. Please choose a different identifier or leave it blank.' });
+      } else {
+        console.error('Error creating user profile:', error);
+        res.status(500).json({ error: 'Failed to create user profile' });
+      }
+    }
+  };
+
+  app.post('/api/admin/user-profiles', authenticateToken, requireAdminOrModerator, handleCreateUserProfile);
+  app.post('/api/admin/dummy-users', authenticateToken, requireAdminOrModerator, handleCreateUserProfile);
+
+  app.put('/api/admin/users/:id', authenticateToken, requireAdminOrModerator, async (req: any, res) => {
+    const { name, email, role, isApproved, notes } = req.body;
+    try {
+      const targetUser = getDb(req).prepare('SELECT id, email, name, role, isApproved, approval_email_sent, isDummy, notes FROM users WHERE id = ?').get(req.params.id) as any;
       if (!targetUser) return res.status(404).json({ error: 'User not found' });
 
       if (req.user.role === 'moderator') {
-        if (targetUser.role === 'admin' || targetUser.role === 'moderator') {
+        if (!targetUser.isDummy && (targetUser.role === 'admin' || targetUser.role === 'moderator')) {
           return res.status(403).json({ error: 'Moderators cannot modify admins or other moderators' });
         }
-        getDb(req).prepare('UPDATE users SET isApproved = ? WHERE id = ?')
-          .run(isApproved ? 1 : 0, req.params.id);
+        if (targetUser.isDummy) {
+          // User profiles can only be instructor or driver_manager
+          const allowedProfileRole = (role === 'driver_manager' || role === 'instructor') ? role : targetUser.role;
+          getDb(req).prepare('UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?')
+            .run(name || targetUser.name, email || targetUser.email, allowedProfileRole, req.params.id);
+
+          if (name && name !== targetUser.name) {
+            getDb(req).prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(name, req.params.id);
+          }
+        } else {
+          getDb(req).prepare('UPDATE users SET isApproved = ? WHERE id = ?')
+            .run(isApproved ? 1 : 0, req.params.id);
+        }
       } else {
+        // Admin
+        const finalRole = targetUser.isDummy 
+          ? ((role === 'driver_manager' || role === 'instructor') ? role : targetUser.role) 
+          : role;
+
         getDb(req).prepare('UPDATE users SET name = ?, email = ?, role = ?, isApproved = ? WHERE id = ?')
-          .run(name, email, role, isApproved ? 1 : 0, req.params.id);
+          .run(name, email, finalRole, isApproved ? 1 : 0, req.params.id);
+
+        if (name && name !== targetUser.name) {
+          getDb(req).prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(name, req.params.id);
+        }
       }
 
       // First-time approval notification with strict idempotency (never send multiple emails)
@@ -608,10 +694,26 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/admin/users/:id', authenticateToken, requireAdmin, (req, res) => {
-    getDb(req).prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-    io.emit('users_updated');
-    res.json({ success: true });
+  app.delete('/api/admin/users/:id', authenticateToken, requireAdminOrModerator, (req: any, res) => {
+    try {
+      const targetUser = getDb(req).prepare('SELECT id, isDummy, role, email FROM users WHERE id = ?').get(req.params.id) as any;
+      if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+      const isProfile = Boolean(targetUser.isDummy) || (targetUser.email && targetUser.email.includes('@external.placeholder'));
+
+      if (req.user.role === 'moderator' && !isProfile) {
+        return res.status(403).json({ error: 'Moderators can only delete user profiles' });
+      }
+
+      getDb(req).prepare('UPDATE allocations SET instructorId = NULL WHERE instructorId = ?').run(req.params.id);
+      getDb(req).prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+      io.emit('allocations_updated');
+      io.emit('users_updated');
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error('Error deleting user:', err);
+      res.status(500).json({ error: 'Failed to delete user' });
+    }
   });
 
   // Allocations: Get by date or date range
@@ -651,22 +753,33 @@ async function startServer() {
 
   // Allocations: Create
   app.post('/api/allocations', authenticateToken, (req: any, res) => {
-    const { date, jobNumber, isFullJob, headcodes, notes } = req.body;
+    const { date, jobNumber, isFullJob, headcodes, notes, instructorId } = req.body;
     const id = uuidv4();
     const now = Date.now();
     
+    let finalInstructorId = req.user.id;
+    let finalInstructorName = req.user.name;
+
+    if ((req.user.role === 'admin' || req.user.role === 'moderator') && instructorId && instructorId !== req.user.id) {
+      const targetUser = getDb(req).prepare('SELECT id, name FROM users WHERE id = ?').get(instructorId) as any;
+      if (targetUser) {
+        finalInstructorId = targetUser.id;
+        finalInstructorName = targetUser.name;
+      }
+    }
+
     const stmt = getDb(req).prepare(`
       INSERT INTO allocations (id, date, instructorId, instructorName, jobNumber, isFullJob, headcodes, notes, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     stmt.run(
-      id, date, req.user.id, req.user.name, jobNumber, 
+      id, date, finalInstructorId, finalInstructorName, jobNumber, 
       isFullJob ? 1 : 0, JSON.stringify(headcodes || []), notes || '', now
     );
     
     const newAlloc = {
-      id, date, instructorId: req.user.id, instructorName: req.user.name,
+      id, date, instructorId: finalInstructorId, instructorName: finalInstructorName,
       jobNumber, isFullJob, headcodes: headcodes || [], notes: notes || '',
       createdAt: now
     };
@@ -1229,7 +1342,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -1240,7 +1353,6 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-
 
   io.on('connection', (socket) => {
     const token = socket.handshake.auth?.token;
@@ -1257,9 +1369,29 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
     }
   });
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  httpServer.on('error', (err: any) => {
+    console.error('HTTP server error:', err);
   });
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  });
+
+  const cleanup = () => {
+    console.log('Shutting down server gracefully...');
+    httpServer.close(() => {
+      try { db.close(); } catch (_) {}
+      try { demoDb.close(); } catch (_) {}
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+
+  process.on('SIGTERM', cleanup);
+  process.on('SIGINT', cleanup);
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});

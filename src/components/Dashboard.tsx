@@ -58,6 +58,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
   const [showEditNotes, setShowEditNotes] = useState(false);
   const [showOnlyMine, setShowOnlyMine] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
+  const [selectedInstructorId, setSelectedInstructorId] = useState(user.id);
   const [showHelpModal, setShowHelpModal] = useState(false);
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
@@ -133,6 +134,10 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
 
     socket.on('allocation_deleted', ({ id }) => {
       setAllocations(prev => prev.filter(a => a.id !== id));
+    });
+
+    socket.on('users_updated', () => {
+      fetchUsers();
     });
 
     return () => {
@@ -264,7 +269,8 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
           jobNumber: job,
           isFullJob: fullJob,
           headcodes: fullJob ? [] : headcodes,
-          notes: notes.trim()
+          notes: notes.trim(),
+          instructorId: (user.role === 'admin' || user.role === 'moderator') ? selectedInstructorId : undefined
         })
       });
 
@@ -454,7 +460,30 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
               onAddAllocation={handleAddAllocation}
               formError={formError}
               submitting={submitting}
-            />
+            >
+              {(user.role === 'admin' || user.role === 'moderator') && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                    Allocate To
+                  </label>
+                  <select
+                    value={selectedInstructorId}
+                    onChange={(e) => setSelectedInstructorId(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 text-sm transition-colors"
+                  >
+                    <option value={user.id}>Myself ({user.name})</option>
+                    {users.filter(u => u.id !== user.id).map(u => {
+                      const roleLabel = u.role === 'driver_manager' ? 'Driver Manager' : u.role === 'moderator' ? 'Moderator' : u.role === 'admin' ? 'Admin' : 'Instructor';
+                      return (
+                        <option key={u.id} value={u.id}>
+                          {u.name} ({roleLabel})
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              )}
+            </DiagramSelector>
           </div>
 
           {/* Right Column: List */}
@@ -529,9 +558,27 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
                               )}
                             </div>
                             
-                            <div className="text-sm text-slate-600 dark:text-slate-300 mb-3">
-                              Claimed by <span className="font-medium text-slate-900 dark:text-slate-100">{alloc.instructorName}</span>
-                              {isMine && <span className="text-blue-600 dark:text-blue-400 ml-1">(You)</span>}
+                            <div className="text-sm text-slate-600 dark:text-slate-300 mb-3 flex items-center flex-wrap gap-1.5">
+                              <span>Claimed by</span>
+                              <span className="font-medium text-slate-900 dark:text-slate-100">{alloc.instructorName}</span>
+                              {(() => {
+                                const allocatedUser = users.find(u => u.id === alloc.instructorId || u.name === alloc.instructorName);
+                                if (allocatedUser?.isDummy) {
+                                  return (
+                                    <span 
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold inline-flex items-center gap-1 ${
+                                        allocatedUser.role === 'driver_manager'
+                                          ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60'
+                                          : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60'
+                                      }`}
+                                    >
+                                      <span>{allocatedUser.role === 'driver_manager' ? 'Driver Manager' : 'Instructor'}</span>
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
+                              {isMine && <span className="text-blue-600 dark:text-blue-400 ml-1 font-medium">(You)</span>}
                             </div>
 
                             {!alloc.isFullJob && alloc.headcodes.length > 0 && (
@@ -671,9 +718,14 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors"
                     required
                   >
-                    {users.map(u => (
-                      <option key={u.id} value={u.id}>{u.name}</option>
-                    ))}
+                    {users.map(u => {
+                      const roleLabel = u.role === 'driver_manager' ? 'Driver Manager' : u.role === 'moderator' ? 'Moderator' : u.role === 'admin' ? 'Admin' : 'Instructor';
+                      return (
+                        <option key={u.id} value={u.id}>
+                          {u.name} {u.id === user.id ? '(You)' : `(${roleLabel})`}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               )}

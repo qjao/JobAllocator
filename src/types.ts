@@ -2,8 +2,9 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'instructor' | 'moderator';
+  role: 'admin' | 'instructor' | 'moderator' | 'driver_manager';
   isApproved: boolean;
+  isDummy?: boolean;
   approval_email_sent?: boolean;
   lastLoginAt?: string | null;
   lastAllocationAt?: string | null;
