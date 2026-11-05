@@ -1339,7 +1339,6 @@ async function startServer() {
                 });
               }
             }
-          }
         } catch (extErr) {
           console.warn('External TDtools API lookup failed, falling back to local database:', extErr);
         }
