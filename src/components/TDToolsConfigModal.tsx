@@ -363,15 +363,39 @@ if (!empty($link) && !empty($diagramName)) {
     $wildcard = "%" . $baseJobNumber . "%";
     
     // A. Daily Allocation
-    $sql = "SELECT * FROM r_daily_allocation WHERE alloc_date = ? AND job_number LIKE ? LIMIT 1";
+    $sql = "SELECT * FROM r_daily_allocation WHERE alloc_date = ? AND job_number LIKE ?";
     if ($stmt = @$link->prepare($sql)) {
         $stmt->bind_param("ss", $searchDate, $wildcard);
         $stmt->execute();
         $res = $stmt->get_result();
-        if ($res && $row = $res->fetch_assoc()) {
+        $preferredRow = null;
+        if ($res) {
+            while ($candidateRow = $res->fetch_assoc()) {
+                if ($preferredRow === null) {
+                    $preferredRow = $candidateRow;
+                    continue;
+                }
+                $candidateJobNumber = strtoupper(trim((string)($candidateRow['job_number'] ?? '')));
+                $preferredJobNumber = strtoupper(trim((string)($preferredRow['job_number'] ?? '')));
+                $candidateIsExactJob = ($candidateJobNumber === strtoupper($diagramName) || $candidateJobNumber === strtoupper($baseJobNumber));
+                $preferredIsExactJob = ($preferredJobNumber === strtoupper($diagramName) || $preferredJobNumber === strtoupper($baseJobNumber));
+                $candidateIsDaily = array_key_exists('is_daily', $candidateRow) && (int)$candidateRow['is_daily'] === 1;
+                $preferredIsDaily = array_key_exists('is_daily', $preferredRow) && (int)$preferredRow['is_daily'] === 1;
+                if (($candidateIsDaily && !$preferredIsDaily) ||
+                    ($candidateIsDaily === $preferredIsDaily && $candidateIsExactJob && !$preferredIsExactJob)) {
+                    $preferredRow = $candidateRow;
+                }
+            }
+        }
+        if ($preferredRow) {
+            $row = $preferredRow;
             $allocation = $row;
-            $typeField = strtolower($row['type'] ?? $row['alloc_type'] ?? $row['source'] ?? $row['roster_type'] ?? '');
-            $allocType = (strpos($typeField, 'week') !== false) ? 'Weekly' : 'Daily';
+            if (array_key_exists('is_daily', $row)) {
+                $allocType = ((int)$row['is_daily'] === 1) ? 'Daily' : 'Weekly';
+            } else {
+                $typeField = strtolower($row['type'] ?? $row['alloc_type'] ?? $row['source'] ?? $row['roster_type'] ?? '');
+                $allocType = (strpos($typeField, 'week') !== false) ? 'Weekly' : 'Daily';
+            }
         }
         $stmt->close();
     }

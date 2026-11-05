@@ -314,12 +314,32 @@ if (!empty($link) && !empty($diagramName)) {
     $jobSearchWildcard = "%" . $baseJobNumber . "%";
 
     // A. Check r_daily_allocation
-    $sqlAlloc = "SELECT * FROM r_daily_allocation WHERE alloc_date = ? AND job_number LIKE ? LIMIT 1";
+    $sqlAlloc = "SELECT * FROM r_daily_allocation WHERE alloc_date = ? AND job_number LIKE ?";
     if ($stmtAlloc = @$link->prepare($sqlAlloc)) {
         $stmtAlloc->bind_param("ss", $searchDate, $jobSearchWildcard);
         $stmtAlloc->execute();
         $resAlloc = $stmtAlloc->get_result();
-        if ($resAlloc && $allocRow = $resAlloc->fetch_assoc()) {
+        $preferredAllocRow = null;
+        if ($resAlloc) {
+            while ($candidateAllocRow = $resAlloc->fetch_assoc()) {
+                if ($preferredAllocRow === null) {
+                    $preferredAllocRow = $candidateAllocRow;
+                    continue;
+                }
+                $candidateJobNumber = strtoupper(trim((string)($candidateAllocRow['job_number'] ?? '')));
+                $preferredJobNumber = strtoupper(trim((string)($preferredAllocRow['job_number'] ?? '')));
+                $candidateIsExactJob = ($candidateJobNumber === strtoupper($diagramName) || $candidateJobNumber === strtoupper($baseJobNumber));
+                $preferredIsExactJob = ($preferredJobNumber === strtoupper($diagramName) || $preferredJobNumber === strtoupper($baseJobNumber));
+                $candidateIsDaily = array_key_exists('is_daily', $candidateAllocRow) && (int)$candidateAllocRow['is_daily'] === 1;
+                $preferredIsDaily = array_key_exists('is_daily', $preferredAllocRow) && (int)$preferredAllocRow['is_daily'] === 1;
+                if (($candidateIsDaily && !$preferredIsDaily) ||
+                    ($candidateIsDaily === $preferredIsDaily && $candidateIsExactJob && !$preferredIsExactJob)) {
+                    $preferredAllocRow = $candidateAllocRow;
+                }
+            }
+        }
+        if ($preferredAllocRow) {
+            $allocRow = $preferredAllocRow;
             $allocation = $allocRow;
             if (array_key_exists('is_daily', $allocRow)) {
                 $allocType = ((int)$allocRow['is_daily'] === 1) ? 'Daily' : 'Weekly';
