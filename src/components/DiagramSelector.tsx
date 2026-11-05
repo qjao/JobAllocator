@@ -43,6 +43,7 @@ interface DiagramSelectorProps {
   title?: string;
   isDemo?: boolean;
   canAccessTDTools?: boolean;
+  canRefreshDiagrams?: boolean;
   initialAllocation?: {
     jobNumber: string;
     isFullJob: boolean;
@@ -62,7 +63,7 @@ const DEPOT_NAMES: Record<string, string> = {
   'SH': 'Shenfield'
 };
 
-export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, canAccessTDTools = false, initialAllocation, children }: DiagramSelectorProps) {
+export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, canAccessTDTools = false, canRefreshDiagrams = false, initialAllocation, children }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
   
@@ -499,15 +500,17 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                 Select Depot
               </label>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  title="Refresh diagrams from TDtools"
-                  onClick={() => loadData(true)}
-                  disabled={refreshing}
-                  className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-600' : ''}`} />
-                </button>
+                {canRefreshDiagrams && (
+                  <button
+                    type="button"
+                    title="Refresh diagrams from TDtools"
+                    onClick={() => loadData(true)}
+                    disabled={refreshing}
+                    className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-600' : ''}`} />
+                  </button>
+                )}
                 {canAccessTDTools && (
                   <button
                     type="button"
