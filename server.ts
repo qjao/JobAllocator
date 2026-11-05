@@ -1253,7 +1253,6 @@ async function startServer() {
               const rawDriverName = extData.driverName || extData.allocation?.driver_name || extData.driver_name || null;
               const driverName = (isDemo && rawDriverName) ? obfuscateDriverName(rawDriverName) : rawDriverName;
               const depot = extData.depot || extData.allocation?.depot || null;
-              
               // Resolve allocation type: 'Weekly' vs 'Daily'
               const allocation = extData.allocation;
               const hasDailyFlag = allocation && Object.prototype.hasOwnProperty.call(allocation, 'is_daily');

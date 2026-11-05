@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, Plus, AlertTriangle, X, Pencil, Maximize2, User as UserIcon, MapPin, Server, ExternalLink, RefreshCw } from 'lucide-react';
 import { Allocation } from '../types';
 import TDToolsConfigModal from './TDToolsConfigModal';
+import DriverEmailLink from './DriverEmailLink';
 
 interface DriverInfo {
   found: boolean;
@@ -44,6 +45,7 @@ interface DiagramSelectorProps {
   isDemo?: boolean;
   canAccessTDTools?: boolean;
   canRefreshDiagrams?: boolean;
+  currentUserName?: string;
   initialAllocation?: {
     jobNumber: string;
     isFullJob: boolean;
@@ -63,7 +65,7 @@ const DEPOT_NAMES: Record<string, string> = {
   'SH': 'Shenfield'
 };
 
-export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, canAccessTDTools = false, canRefreshDiagrams = false, initialAllocation, children }: DiagramSelectorProps) {
+export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, canAccessTDTools = false, canRefreshDiagrams = false, currentUserName = '', initialAllocation, children }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
   
@@ -443,6 +445,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       .join(' ');
   };
   const displayDriverName = isDemoActive ? obfuscateName(driverInfo?.driverName) : driverInfo?.driverName;
+  const selectedDateString = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
 
   if (apiError) {
     return (
@@ -454,15 +457,18 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   }
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 relative">
+    <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 relative ${onCancel ? 'max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain' : ''}`}>
       {onCancel && (
-        <button 
-          type="button"
-          onClick={onCancel}
-          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <div className="sticky top-0 z-30 -mx-6 -mt-6 mb-4 flex h-12 items-center justify-end bg-white/95 px-3 backdrop-blur dark:bg-slate-800/95">
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="Close edit form"
+            className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       )}
       <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 pr-8 flex items-center gap-2">
         <Plus className="w-6 h-6 text-blue-500 dark:text-blue-400" />
@@ -543,6 +549,10 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                 value={selectedDiagram}
                 onChange={(e) => {
                   const newDiagram = e.target.value;
+                  if (newDiagram !== selectedDiagram) {
+                    setNotesInput('');
+                    setShowNotes(false);
+                  }
                   setSelectedDiagram(newDiagram);
                   
                   const matching = allocations.filter(a => a.jobNumber === newDiagram);
@@ -764,6 +774,22 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-2 text-red-700 dark:text-red-400 text-sm mb-4 transition-colors">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <p>{formError}</p>
+            </div>
+          )}
+
+          {!initialAllocation && driverInfo?.driverName && (
+            <div className="mb-3">
+              <DriverEmailLink
+                driverName={driverInfo.driverName}
+                jobNumber={selectedDiagram}
+                date={selectedDateString}
+                isFullJob={isFullDiagram || (selectedHeadcodeIndices.length === availableHeadcodes.length && availableHeadcodes.length > 0)}
+                headcodes={isFullDiagram ? [] : selectedHeadcodeIndices.map(index => availableHeadcodes[index])}
+                notes={notesInput}
+                currentUserName={currentUserName}
+                isDemo={isDemoActive}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-4 py-2.5 text-sm font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-950/70 transition-colors"
+              />
             </div>
           )}
 

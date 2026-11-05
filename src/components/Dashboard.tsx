@@ -7,6 +7,7 @@ import { io } from 'socket.io-client';
 
 import HelpModal from './HelpModal';
 import DiagramSelector from './DiagramSelector';
+import DriverEmailLink from './DriverEmailLink';
 import MiniCalendar from './MiniCalendar';
 import { useRef } from 'react';
 
@@ -457,13 +458,13 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
               isDemo={user.isDemo}
               canAccessTDTools={!user.isDemo && user.role === 'admin'}
               canRefreshDiagrams={!user.isDemo && (user.role === 'admin' || user.role === 'moderator')}
+              currentUserName={user.name}
               darkMode={darkMode}
               selectedDate={selectedDate}
               allocations={allocations}
               onAddAllocation={handleAddAllocation}
               formError={formError}
               submitting={submitting}
-              isDemo={user?.isDemo}
             >
               {(user.role === 'admin' || user.role === 'moderator') && (
                 <div className="mb-4">
@@ -600,6 +601,20 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
                                 ))}
                               </div>
                             )}
+
+                            {isMine && (
+                              <div className="mt-3">
+                                <DriverEmailLink
+                                  jobNumber={alloc.jobNumber}
+                                  date={alloc.date}
+                                  isFullJob={alloc.isFullJob}
+                                  headcodes={alloc.headcodes || []}
+                                  notes={alloc.notes}
+                                  currentUserName={user.name}
+                                  isDemo={user.isDemo}
+                                />
+                              </div>
+                            )}
                           </div>
 
                           {alloc.notes && (
@@ -674,10 +689,10 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
               isDemo={user.isDemo}
               canAccessTDTools={!user.isDemo && user.role === 'admin'}
               canRefreshDiagrams={!user.isDemo && (user.role === 'admin' || user.role === 'moderator')}
+              currentUserName={user.name}
               darkMode={darkMode}
               selectedDate={new Date(editingAllocation.date)}
               allocations={allocations.filter(a => a.id !== editingAllocation.id)}
-              isDemo={user?.isDemo}
               onAddAllocation={async (job, isFull, hcs, notes) => {
                 setEditSubmitting(true);
                 try {
