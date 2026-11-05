@@ -74,6 +74,18 @@ function initDb(database) {
       timestamp INTEGER,
       userId TEXT
     );
+    CREATE TABLE IF NOT EXISTS r_daily_allocation (
+      id TEXT PRIMARY KEY,
+      alloc_date TEXT,
+      job_number TEXT,
+      driver_name TEXT,
+      depot TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_alloc_date_job ON r_daily_allocation (alloc_date, job_number);
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
   `);
   try {
     database.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'instructor'");
@@ -93,10 +105,54 @@ function initDb(database) {
   try {
     database.exec("ALTER TABLE users ADD COLUMN notes TEXT");
   } catch (e) {}
+  try {
+    database.exec("ALTER TABLE r_daily_allocation ADD COLUMN alloc_type TEXT DEFAULT 'Daily'");
+  } catch (e) {}
+}
+
+function seedDailyAllocations(database: any) {
+  try {
+    const count = database.prepare('SELECT count(*) as c FROM r_daily_allocation').get() as { c: number };
+    if (count.c === 0) {
+      const today = new Date();
+      const datesToSeed: string[] = [];
+      for (let offset = -3; offset <= 21; offset++) {
+        const d = new Date(today);
+        d.setDate(d.getDate() + offset);
+        datesToSeed.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+      }
+      
+      const sampleDrivers = [
+        { job: '1101', name: 'James Thornton', depot: 'Maidenhead', type: 'Daily' },
+        { job: '1102', name: 'Sarah Jenkins', depot: 'Abbey Wood', type: 'Weekly' },
+        { job: '1103', name: 'Michael O\'Connor', depot: 'Gidea Park', type: 'Daily' },
+        { job: '1104', name: 'Marcus Vance', depot: 'Old Oak Common', type: 'Daily' },
+        { job: '1105', name: 'David Miller', depot: 'Plumstead', type: 'Weekly' },
+        { job: '1106', name: 'Rachel Adams', depot: 'Shenfield', type: 'Daily' },
+        { job: '1107', name: 'Kieran Wright', depot: 'Ilford', type: 'Weekly' },
+        { job: '2101', name: 'Emma Watson', depot: 'Abbey Wood', type: 'Daily' },
+        { job: '2102', name: 'Liam Davies', depot: 'Maidenhead', type: 'Daily' },
+        { job: '2104', name: 'Sophie Campbell', depot: 'Old Oak Common', type: 'Weekly' },
+        { job: '3101', name: 'Robert Blake', depot: 'Abbey Wood', type: 'Daily' },
+        { job: '3104', name: 'Anthony Taylor', depot: 'Old Oak Common', type: 'Daily' },
+      ];
+
+      const insertStmt = database.prepare('INSERT INTO r_daily_allocation (id, alloc_date, job_number, driver_name, depot, alloc_type) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const dateStr of datesToSeed) {
+        for (const s of sampleDrivers) {
+          insertStmt.run(`${dateStr}-${s.job}`, dateStr, s.job, s.name, s.depot, s.type || 'Daily');
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error seeding r_daily_allocation:', e);
+  }
 }
 
 initDb(db);
 initDb(demoDb);
+seedDailyAllocations(db);
+seedDailyAllocations(demoDb);
 
 const getDb = (req) => (req && req.user && req.user.isDemo) ? demoDb : db;
 
@@ -305,7 +361,8 @@ async function startServer() {
         lastLoginAt: user.last_login_at || null,
         lastAllocationAt: lastAllocIso,
         last_login_at: user.last_login_at || null,
-        last_allocation_at: lastAllocIso
+        last_allocation_at: lastAllocIso,
+        isDemo: Boolean((req as any).user?.isDemo)
       }
     });
   });
@@ -839,9 +896,93 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // Diagrams API: serve diagrams from data directory
-  app.get("/api/diagrams", (req, res) => {
+  // Helper to get TDtools API configuration
+  function getTDToolsConfig(req?: any) {
+    let url = process.env.TDTOOLS_API_URL || process.env.TDTOOLS_ALLOCATION_URL || '';
+    let token = process.env.TDTOOLS_API_TOKEN || '';
+
     try {
+      // Check persistent SQLite database on disk first
+      const urlRow = db.prepare("SELECT value FROM app_settings WHERE key = 'tdtools_api_url'").get() as any;
+      if (urlRow && urlRow.value) url = urlRow.value;
+      const tokenRow = db.prepare("SELECT value FROM app_settings WHERE key = 'tdtools_api_token'").get() as any;
+      if (tokenRow && tokenRow.value) token = tokenRow.value;
+
+      // Fallback check demo database if in demo mode and disk had none
+      if ((!url || !token) && req) {
+        const demoInstance = getDb(req);
+        if (demoInstance !== db) {
+          const dUrl = demoInstance.prepare("SELECT value FROM app_settings WHERE key = 'tdtools_api_url'").get() as any;
+          if (dUrl && dUrl.value) url = dUrl.value;
+          const dToken = demoInstance.prepare("SELECT value FROM app_settings WHERE key = 'tdtools_api_token'").get() as any;
+          if (dToken && dToken.value) token = dToken.value;
+        }
+      }
+    } catch (e) {}
+
+    return { url, token };
+  }
+
+  // Diagrams API: serve diagrams from live TDtools API or fallback data directory
+  app.get("/api/diagrams", async (req, res) => {
+    // Prevent any browser or proxy caching
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    try {
+      // 1. Check if external TDtools API is configured to load r_jobs, r_jobs_stp, and r_jobs_headcodes live
+      const { url: externalApiUrl, token: apiToken } = getTDToolsConfig(req);
+      if (externalApiUrl) {
+        try {
+          const targetUrl = new URL(externalApiUrl);
+          targetUrl.searchParams.set('action', 'diagrams');
+          targetUrl.searchParams.set('_nocache', Date.now().toString());
+
+          const extRes = await fetch(targetUrl.toString(), {
+            cache: 'no-store',
+            headers: {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+              ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {})
+            }
+          });
+          if (extRes.ok) {
+            const extData = await extRes.json();
+            if (extData && Array.isArray(extData.jobs)) {
+              const oneYearAgo = new Date();
+              oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+              const oneYearAgoIso = oneYearAgo.toISOString().substring(0, 10);
+
+              // Filter out historical diagrams (e.g. legacy 2021m bundles or jobs without valid recent dates)
+              const cleanJobs = extData.jobs.filter((j: any) => {
+                if (!j.name) return false;
+                if (j.bundle && String(j.bundle).includes('2021')) return false;
+                if (j.pdfname && String(j.pdfname).includes('2021')) return false;
+                if (j.from && String(j.from).trim() < oneYearAgoIso) return false;
+                return true;
+              });
+
+              return res.json({
+                jobs: cleanJobs,
+                headcodesMap: extData.headcodesMap || {},
+                source: 'tdtools_api',
+                counts: {
+                  ...extData.counts,
+                  total_jobs: cleanJobs.length
+                },
+                dbErrors: extData.db_errors || null
+              });
+            }
+          } else {
+            console.warn(`TDtools API action=diagrams responded with HTTP ${extRes.status}`);
+          }
+        } catch (extErr) {
+          console.warn('Failed to load diagrams from TDtools API, checking CSV fallback:', extErr);
+        }
+      }
+
+      // 2. Fallback: Parse local CSV files from data/ directory
       const parseCsv = (content: string) => {
         const lines = content.split('\n');
         if (lines.length === 0) return [];
@@ -922,10 +1063,358 @@ async function startServer() {
 
       const allJobs = [...ltpData, ...stpData];
       allJobs.sort((a, b) => a.name.localeCompare(b.name));
-      res.json({ jobs: allJobs, headcodesMap: hm });
+      res.json({ jobs: allJobs, headcodesMap: hm, source: 'local_csv' });
     } catch (e: any) {
       console.error('Failed to parse diagrams API', e);
       res.status(500).json({ error: 'Failed to read diagrams' });
+    }
+  });
+
+  // Get TDtools API Settings
+  app.get('/api/settings/tdtools', authenticateToken, (req: any, res) => {
+    try {
+      const { url, token } = getTDToolsConfig(req);
+      res.json({
+        url,
+        hasToken: !!token,
+        tokenPreview: token ? `${token.substring(0, 4)}...${token.slice(-3)}` : ''
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to read TDtools settings' });
+    }
+  });
+
+  // Save TDtools API Settings (Admin / Moderator)
+  app.post('/api/settings/tdtools', authenticateToken, requireAdminOrModerator, (req: any, res) => {
+    try {
+      const { url, token } = req.body;
+      
+      const upsert = (database: any) => {
+        const stmt = database.prepare(`
+          INSERT INTO app_settings (key, value) VALUES (?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        `);
+        if (url !== undefined) stmt.run('tdtools_api_url', String(url).trim());
+        if (token !== undefined && token !== '') stmt.run('tdtools_api_token', String(token).trim());
+      };
+
+      // Save to both persistent database and demo memory database
+      upsert(db);
+      upsert(demoDb);
+
+      res.json({ success: true, message: 'TDtools API settings saved successfully' });
+    } catch (e: any) {
+      res.status(500).json({ error: 'Failed to update TDtools settings' });
+    }
+  });
+
+  // Test TDtools API Connection (Catalog & Lookup)
+  app.post('/api/settings/tdtools/test', authenticateToken, requireAdminOrModerator, async (req: any, res) => {
+    try {
+      const { url, token, testJob = 'AW1104', saveOnSuccess } = req.body;
+      const currentConfig = getTDToolsConfig(req);
+      const targetUrlStr = (url !== undefined ? url : currentConfig.url) || '';
+      const targetToken = (token !== undefined && token !== '' ? token : currentConfig.token) || '';
+
+      if (!targetUrlStr) {
+        return res.status(400).json({ success: false, error: 'No TDtools API URL specified' });
+      }
+
+      const authHeaders = targetToken ? { 'Authorization': `Bearer ${targetToken}` } : {};
+      const startTime = Date.now();
+
+      // 1. Test Diagram Catalog Synchronization (?action=diagrams)
+      let catalogResult: any = null;
+      try {
+        const catUrl = new URL(targetUrlStr);
+        catUrl.searchParams.set('action', 'diagrams');
+        const catRes = await fetch(catUrl.toString(), { headers: authHeaders });
+        if (catRes.ok) {
+          catalogResult = await catRes.json();
+        } else {
+          catalogResult = { error: `HTTP ${catRes.status}: ${await catRes.text().catch(() => '')}` };
+        }
+      } catch (err: any) {
+        catalogResult = { error: err.message };
+      }
+
+      // 2. Test Single Diagram Lookup (?name=...)
+      let lookupResult: any = null;
+      try {
+        const lookUrl = new URL(targetUrlStr);
+        lookUrl.searchParams.set('name', testJob);
+        const today = new Date();
+        lookUrl.searchParams.set('date', `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`);
+        const lookRes = await fetch(lookUrl.toString(), { headers: authHeaders });
+        if (lookRes.ok) {
+          lookupResult = await lookRes.json();
+        } else {
+          lookupResult = { error: `HTTP ${lookRes.status}: ${await lookRes.text().catch(() => '')}` };
+        }
+      } catch (err: any) {
+        lookupResult = { error: err.message };
+      }
+
+      const responseTimeMs = Date.now() - startTime;
+      const catalogSuccess = catalogResult && Array.isArray(catalogResult.jobs);
+      const lookupSuccess = lookupResult && lookupResult.success !== false;
+
+      // Auto-save settings to database if requested
+      if (saveOnSuccess && (catalogSuccess || lookupSuccess)) {
+        const upsert = (database: any) => {
+          const stmt = database.prepare(`
+            INSERT INTO app_settings (key, value) VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+          `);
+          stmt.run('tdtools_api_url', targetUrlStr.trim());
+          if (targetToken) stmt.run('tdtools_api_token', targetToken.trim());
+        };
+        upsert(db);
+        upsert(demoDb);
+      }
+
+      res.json({
+        success: catalogSuccess || lookupSuccess,
+        responseTimeMs,
+        catalog: {
+          success: catalogSuccess,
+          totalJobs: catalogResult?.jobs?.length || 0,
+          counts: catalogResult?.counts || {},
+          sampleJobs: catalogResult?.sample_jobs || (catalogResult?.jobs ? catalogResult.jobs.slice(0, 6).map((j: any) => j.name) : []),
+          headcodesCount: catalogResult?.headcodesMap ? Object.keys(catalogResult.headcodesMap).length : 0,
+          dbErrors: catalogResult?.db_errors || null,
+          tablesFound: catalogResult?.tables_found || null,
+          rawError: catalogResult?.error || null
+        },
+        lookup: {
+          success: lookupSuccess,
+          driverName: lookupResult?.driverName || lookupResult?.allocation?.driver_name || null,
+          depot: lookupResult?.depot || lookupResult?.allocation?.depot || null,
+          pdfname: lookupResult?.pdfname || lookupResult?.diagram?.pdfname || null,
+          page: lookupResult?.page || lookupResult?.diagram?.pdfpage || null,
+          rawError: lookupResult?.error || null
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message || 'Failed to connect to TDtools API' });
+    }
+  });
+
+  // Diagram & Driver Info API: Unified retrieval of Diagram PDF/Page and Driver Allocation
+  app.get('/api/diagrams/driver-info', authenticateToken, async (req: any, res) => {
+    try {
+      const { date, job } = req.query;
+      if (!date || !job) {
+        return res.status(400).json({ error: 'Date and job are required' });
+      }
+
+      const isDemo = Boolean(req.user?.isDemo);
+      const jobStr = String(job).trim();
+      const dateStr = String(date).trim();
+      const { url: externalApiUrl, token: apiToken } = getTDToolsConfig(req);
+
+      // Obfuscate driver name for demo / public preview privacy
+      const obfuscateDriverName = (name: string): string => {
+        if (!name || typeof name !== 'string') return '';
+        return name
+          .trim()
+          .split(/\s+/)
+          .map(part => {
+            if (part.length <= 1) return part;
+            return part[0] + '*'.repeat(Math.max(3, part.length - 1));
+          })
+          .join(' ');
+      };
+
+      // 1. If TDtools external API URL is configured, query it first as the authoritative live source
+      if (externalApiUrl) {
+        try {
+          const targetUrl = new URL(externalApiUrl);
+          targetUrl.searchParams.set('date', dateStr);
+          targetUrl.searchParams.set('name', jobStr);
+          targetUrl.searchParams.set('job', jobStr);
+
+          const externalRes = await fetch(targetUrl.toString(), {
+            headers: {
+              ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {})
+            }
+          });
+
+          if (externalRes.ok) {
+            const extData = await externalRes.json();
+            if (extData && extData.success !== false) {
+              const rawDriverName = extData.driverName || extData.allocation?.driver_name || extData.driver_name || null;
+              const driverName = (isDemo && rawDriverName) ? obfuscateDriverName(rawDriverName) : rawDriverName;
+              const depot = extData.depot || extData.allocation?.depot || null;
+              
+              // Resolve allocation type: 'Weekly' vs 'Daily'
+              let allocType: 'Daily' | 'Weekly' | string = extData.allocType || extData.allocation?.alloc_type || extData.allocation?.type || '';
+              if (!allocType) {
+                const rowType = String(extData.allocation?.source || extData.allocation?.roster_type || extData.diagram?.pdfname || '').toLowerCase();
+                if (rowType.includes('week')) {
+                  allocType = 'Weekly';
+                } else if (extData.allocation) {
+                  allocType = 'Daily';
+                }
+              }
+
+              const pdfname = extData.pdfname || extData.diagram?.pdfname || null;
+              const page = extData.page || extData.diagram?.pdfpage || null;
+              const imageUrl = extData.imageUrl || extData.diagram?.imageUrl || null;
+              const pdfUrl = extData.pdfUrl || extData.diagram?.pdfUrl || null;
+              const isStp = extData.diagram?.isStp ?? false;
+              const cancelled = extData.diagram?.cancelled ?? false;
+
+              if (driverName || pdfname || imageUrl || extData.found) {
+                return res.json({
+                  found: true,
+                  source: 'tdtools_api',
+                  driverName,
+                  depot,
+                  allocType: allocType || 'Daily',
+                  isDemo,
+                  pdfname,
+                  page,
+                  imageUrl,
+                  pdfUrl,
+                  isStp,
+                  cancelled
+                });
+              }
+            }
+          }
+        } catch (extErr) {
+          console.warn('External TDtools API lookup failed, falling back to local database:', extErr);
+        }
+      }
+
+      // 2. Local Fallback: Extract numbers from diagram name (e.g. "AW1104" becomes "1104", matching diagram.php)
+      const matches = jobStr.match(/\d+/);
+      const baseJobNumber = matches ? matches[0] : jobStr;
+      const jobSearchWildcard = `%${baseJobNumber}%`;
+
+      const row = getDb(req).prepare(`
+        SELECT driver_name, depot, alloc_type
+        FROM r_daily_allocation 
+        WHERE alloc_date = ? AND job_number LIKE ? 
+        ORDER BY LENGTH(job_number) ASC
+        LIMIT 1
+      `).get(dateStr, jobSearchWildcard) as any;
+
+      if (row && row.driver_name) {
+        const rawDriverName = row.driver_name;
+        const driverName = isDemo ? obfuscateDriverName(rawDriverName) : rawDriverName;
+        return res.json({
+          found: true,
+          source: 'local_db',
+          driverName,
+          depot: row.depot || '',
+          allocType: row.alloc_type || 'Daily',
+          isDemo
+        });
+      }
+
+      // 3. Secondary Fallback: Local CSV file if present in data/r_daily_allocation.csv
+      const csvPath = path.join(process.cwd(), 'data', 'r_daily_allocation.csv');
+      if (fs.existsSync(csvPath)) {
+        const content = fs.readFileSync(csvPath, 'utf8');
+        const lines = content.split('\n');
+        for (const line of lines.slice(1)) {
+          if (!line.trim()) continue;
+          const parts = line.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
+          if (parts.length >= 3) {
+            const [aDate, aJob, aDriver, aDepot, aType] = parts;
+            if (aDate === dateStr && aJob.includes(baseJobNumber)) {
+              const driverName = isDemo ? obfuscateDriverName(aDriver) : aDriver;
+              return res.json({
+                found: true,
+                source: 'local_csv',
+                driverName,
+                depot: aDepot || '',
+                allocType: aType || 'Daily',
+                isDemo
+              });
+            }
+          }
+        }
+      }
+
+      return res.json({ found: false });
+    } catch (e: any) {
+      console.error('Error fetching driver info:', e);
+      res.status(500).json({ error: 'Failed to retrieve driver info' });
+    }
+  });
+
+  // Diagram Image Proxy: safely renders diagram images if direct access from browser is restricted
+  app.get('/api/diagrams/image-proxy', authenticateToken, async (req: any, res) => {
+    try {
+      const { pdfname, page, url } = req.query;
+      let targetUrl = url ? String(url) : '';
+
+      if (!targetUrl && pdfname && page) {
+        const { url: apiBaseUrl } = getTDToolsConfig(req);
+        let rosterBase = 'https://tdtools.co.uk/roster/';
+        if (apiBaseUrl) {
+          try {
+            const u = new URL(apiBaseUrl);
+            rosterBase = `${u.protocol}//${u.host}${path.posix.dirname(u.pathname)}/`;
+          } catch (e) {}
+        }
+        targetUrl = `${rosterBase}diagramimg.php?pdfname=${encodeURIComponent(String(pdfname))}&page=${encodeURIComponent(String(page))}`;
+      }
+
+      if (!targetUrl) {
+        return res.status(400).send('No image URL or diagram page specified');
+      }
+
+      const imgRes = await fetch(targetUrl, {
+        headers: {
+          'User-Agent': 'TrainDriverInstructorApp/1.0'
+        }
+      });
+
+      if (!imgRes.ok) {
+        return res.status(imgRes.status).send('Failed to fetch diagram image');
+      }
+
+      const contentType = imgRes.headers.get('content-type') || 'image/png';
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      const arrayBuf = await imgRes.arrayBuffer();
+      res.send(Buffer.from(arrayBuf));
+    } catch (proxyErr: any) {
+      console.error('Image proxy error:', proxyErr);
+      res.status(500).send('Error proxying diagram image');
+    }
+  });
+
+  // Admin / Moderator endpoint to import or add daily roster allocations
+  app.post('/api/admin/daily-allocations', authenticateToken, requireAdminOrModerator, (req: any, res) => {
+    try {
+      const { allocations } = req.body;
+      if (!Array.isArray(allocations)) {
+        return res.status(400).json({ error: 'allocations array is required' });
+      }
+
+      const stmt = getDb(req).prepare(`
+        INSERT OR REPLACE INTO r_daily_allocation (id, alloc_date, job_number, driver_name, depot)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+
+      const insertMany = getDb(req).transaction((items: any[]) => {
+        for (const item of items) {
+          if (!item.alloc_date || !item.job_number || !item.driver_name) continue;
+          const id = item.id || `${item.alloc_date}-${item.job_number}`;
+          stmt.run(id, String(item.alloc_date).trim(), String(item.job_number).trim(), String(item.driver_name).trim(), item.depot ? String(item.depot).trim() : '');
+        }
+      });
+
+      insertMany(allocations);
+      res.json({ success: true, count: allocations.length });
+    } catch (e: any) {
+      console.error('Error importing daily allocations:', e);
+      res.status(500).json({ error: 'Failed to import daily allocations' });
     }
   });
 

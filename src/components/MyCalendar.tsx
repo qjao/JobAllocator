@@ -731,6 +731,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
               darkMode={darkMode}
               selectedDate={new Date(editingAllocation.date)}
               allocations={allocations.filter(a => a.id !== editingAllocation.id)}
+              isDemo={user?.isDemo}
               onAddAllocation={async (job, isFull, hcs, notes) => {
                 setEditSubmitting(true);
                 try {
@@ -810,6 +811,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
               onAddAllocation={handleAddAllocationFromModal}
               formError={claimFormError}
               submitting={claimSubmitting}
+              isDemo={user?.isDemo}
               onCancel={() => setClaimModalDate(null)}
               title={`Claim Job for ${format(claimModalDate, 'MMM d, yyyy')}`}
             >

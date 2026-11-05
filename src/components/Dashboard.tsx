@@ -460,6 +460,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
               onAddAllocation={handleAddAllocation}
               formError={formError}
               submitting={submitting}
+              isDemo={user?.isDemo}
             >
               {(user.role === 'admin' || user.role === 'moderator') && (
                 <div className="mb-4">
@@ -670,6 +671,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
               darkMode={darkMode}
               selectedDate={new Date(editingAllocation.date)}
               allocations={allocations.filter(a => a.id !== editingAllocation.id)}
+              isDemo={user?.isDemo}
               onAddAllocation={async (job, isFull, hcs, notes) => {
                 setEditSubmitting(true);
                 try {

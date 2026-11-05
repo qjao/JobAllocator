@@ -1,7 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Loader2, Plus, AlertTriangle, X, Pencil, Maximize2 } from 'lucide-react';
+import { Loader2, Plus, AlertTriangle, X, Pencil, Maximize2, User as UserIcon, MapPin, Server, ExternalLink, RefreshCw } from 'lucide-react';
 import { Allocation } from '../types';
+import TDToolsConfigModal from './TDToolsConfigModal';
+
+interface DriverInfo {
+  found: boolean;
+  driverName?: string;
+  depot?: string;
+  allocType?: 'Daily' | 'Weekly' | string;
+  isDemo?: boolean;
+  source?: 'tdtools_api' | 'local_db' | 'local_csv';
+  pdfname?: string;
+  page?: string | number;
+  imageUrl?: string;
+  pdfUrl?: string;
+  isStp?: boolean;
+  cancelled?: boolean;
+}
 
 interface JobData {
   jobid: string;
@@ -25,6 +41,7 @@ interface DiagramSelectorProps {
   submitting?: boolean;
   onCancel?: () => void;
   title?: string;
+  isDemo?: boolean;
   initialAllocation?: {
     jobNumber: string;
     isFullJob: boolean;
@@ -44,7 +61,7 @@ const DEPOT_NAMES: Record<string, string> = {
   'SH': 'Shenfield'
 };
 
-export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, initialAllocation, children }: DiagramSelectorProps) {
+export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, initialAllocation, children }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
   
@@ -62,10 +79,18 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   const [initialized, setInitialized] = useState<boolean>(!initialAllocation);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const [sourceInfo, setSourceInfo] = useState<{ source?: string; totalJobs?: number; counts?: any; dbErrors?: any } | null>(null);
+
   // Derived data
   const [depots, setDepots] = useState<string[]>([]);
   const [availableDiagrams, setAvailableDiagrams] = useState<JobData[]>([]);
   const [availableHeadcodes, setAvailableHeadcodes] = useState<string[]>([]);
+
+  // Driver & Depot Info state
+  const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
+  const [loadingDriverInfo, setLoadingDriverInfo] = useState(false);
+  const [showTDToolsModal, setShowTDToolsModal] = useState(false);
 
   // Clear selections on date change
   const dateKey = `${selectedDate.getFullYear()}-${selectedDate.getMonth()}-${selectedDate.getDate()}`;
@@ -80,57 +105,121 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       setIsFullDiagram(true);
       setShowNotes(false);
       setNotesInput('');
+      setDriverInfo(null);
     }
   }, [dateKey]);
 
+  // Fetch driver & depot allocation when a diagram or date changes
   useEffect(() => {
-    const loadData = async () => {
+    if (!selectedDiagram) {
+      setDriverInfo(null);
+      return;
+    }
+
+    let isMounted = true;
+    const fetchDriverInfo = async () => {
+      setLoadingDriverInfo(true);
       try {
         const token = localStorage.getItem('token');
-        const res = await fetch('/api/diagrams', {
+        const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+        const res = await fetch(`/api/diagrams/driver-info?date=${encodeURIComponent(dateStr)}&job=${encodeURIComponent(selectedDiagram)}`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         });
-        
-        if (!res.ok) throw new Error('Failed to load diagram data');
-        
-        const data = await res.json();
-        const unifiedJobs: JobData[] = data.jobs;
-        const hm: Record<string, string[]> = data.headcodesMap;
-
-        setJobs(unifiedJobs);
-        setHeadcodesMap(hm);
-
-        // Extract unique depots (first 2 characters of name)
-        const depotSet = new Set<string>();
-        unifiedJobs.forEach(job => {
-          if (job.name && job.name.length >= 2) {
-            depotSet.add(job.name.substring(0, 2));
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) {
+            setDriverInfo(data.found ? data : null);
           }
-        });
-        setDepots(Array.from(depotSet).sort());
-      } catch (err) {
-        console.error("Failed to load Diagram API data", err);
-        setApiError('Unable to load jobs data.');
+        } else {
+          if (isMounted) setDriverInfo(null);
+        }
+      } catch (e) {
+        console.warn('Failed to fetch driver info:', e);
+        if (isMounted) setDriverInfo(null);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoadingDriverInfo(false);
       }
     };
-    
-    loadData();
+
+    fetchDriverInfo();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedDiagram, selectedDate]);
+
+  const loadData = React.useCallback(async (isManualRefresh = false) => {
+    if (isManualRefresh) setRefreshing(true);
+    else setLoading(true);
+    setApiError('');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/diagrams?_t=${Date.now()}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      });
+      
+      if (!res.ok) throw new Error('Failed to load diagram data');
+      
+      const data = await res.json();
+      const unifiedJobs: JobData[] = Array.isArray(data.jobs) ? data.jobs : [];
+      const hm: Record<string, string[]> = data.headcodesMap || {};
+
+      setJobs(unifiedJobs);
+      setHeadcodesMap(hm);
+      setSourceInfo({
+        source: data.source,
+        totalJobs: unifiedJobs.length,
+        counts: data.counts,
+        dbErrors: data.dbErrors
+      });
+
+      // Extract unique depots (strictly 2 uppercase letters e.g. AW, GP, IF, MH, OC, PU, SH)
+      const depotSet = new Set<string>();
+      unifiedJobs.forEach(job => {
+        if (job.name) {
+          const cleanName = job.name.trim().replace(/\s+/g, '');
+          if (cleanName.length >= 2) {
+            const prefix = cleanName.substring(0, 2).toUpperCase();
+            if (/^[A-Z]{2}$/.test(prefix)) {
+              depotSet.add(prefix);
+            }
+          }
+        }
+      });
+      setDepots(Array.from(depotSet).sort());
+    } catch (err) {
+      console.error("Failed to load Diagram API data", err);
+      setApiError('Unable to load jobs data.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   useEffect(() => {
     if (selectedDepot) {
       const dayOfWeek = selectedDate.getDay();
       let expectedDayCodes: string[] = [];
+      let dayLetters: string[] = [];
+
       if (dayOfWeek >= 1 && dayOfWeek <= 5) {
         expectedDayCodes = ['1', '4'];
+        dayLetters = ['M', 'T', 'W', 'V', 'F', 'SX'];
       } else if (dayOfWeek === 6) {
         expectedDayCodes = ['2', '5'];
+        dayLetters = ['S', 'SO'];
       } else if (dayOfWeek === 0) {
         expectedDayCodes = ['3', '6'];
+        dayLetters = ['X', 'SUN'];
       }
       
       const selectedDateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
@@ -140,30 +229,60 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
         'IF': ['002']
       };
 
+      // 1. Primary Filter: matches depot and date schedule
       const filtered = jobs.filter(j => {
-        if (!j.name.startsWith(selectedDepot)) return false;
+        const cleanName = (j.name || '').trim().replace(/\s+/g, '').toUpperCase();
+        if (!cleanName.startsWith(selectedDepot.toUpperCase())) return false;
         
+        // Date range validity check (handles YYYY-MM-DD or DD/MM/YYYY)
         if (j.from && j.to) {
-          const fromDate = j.from.trim();
-          const toDate = j.to.trim();
+          const parseDateString = (str: string) => {
+            const s = str.trim();
+            if (s.includes('/')) {
+              const parts = s.split('/');
+              if (parts.length === 3) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            }
+            return s;
+          };
+          const fromDate = parseDateString(j.from);
+          const toDate = parseDateString(j.to);
           if (selectedDateStr < fromDate || selectedDateStr > toDate) {
             return false;
           }
         }
         
-        const depotCode = j.name.substring(0, 2);
-        const dayCode = j.name.substring(2, 3);
-        const suffix = j.name.substring(3);
+        const depotCode = cleanName.substring(0, 2);
+        const dayCode = cleanName.substring(2, 3);
+        const suffix = cleanName.substring(3);
         
         if (exceptionSuffixes[depotCode]?.includes(suffix)) {
           return true;
         }
+
+        // Check if 3rd character is numeric daycode
+        if (expectedDayCodes.includes(dayCode)) {
+          return true;
+        }
+
+        // Fallback: check j.daycode if provided from database
+        if (j.daycode) {
+          const dc = String(j.daycode).toUpperCase();
+          if (dayLetters.some(letter => dc.includes(letter))) {
+            return true;
+          }
+        }
         
-        return expectedDayCodes.includes(dayCode);
+        return false;
+      });
+
+      // 2. If filtered by strict schedule is empty, fall back to all diagrams for this depot
+      const candidateJobs = filtered.length > 0 ? filtered : jobs.filter(j => {
+        const cleanName = (j.name || '').trim().replace(/\s+/g, '').toUpperCase();
+        return cleanName.startsWith(selectedDepot.toUpperCase());
       });
 
       const dedupedMap = new Map<string, JobData>();
-      filtered.forEach(j => {
+      candidateJobs.forEach(j => {
         if (!dedupedMap.has(j.name) || j.isStp) {
           dedupedMap.set(j.name, j);
         }
@@ -303,6 +422,25 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
 
   // Prefer the deduplicated version (which correctly prioritizes STP over LTP)
   const currentJob = availableDiagrams.find(j => j.name === selectedDiagram);
+  const activePdfName = driverInfo?.pdfname || currentJob?.pdfname;
+  const activePage = driverInfo?.page || currentJob?.page;
+  const activeImageUrl = driverInfo?.imageUrl || (activePdfName && activePage ? `https://tdtools.co.uk/roster/diagramimg.php?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}` : null);
+  const isStp = driverInfo?.isStp ?? currentJob?.isStp ?? false;
+  const isCancelled = driverInfo?.cancelled ?? currentJob?.cancel ?? false;
+
+  const isDemoActive = Boolean(isDemo || driverInfo?.isDemo);
+  const obfuscateName = (name?: string) => {
+    if (!name) return '';
+    return name
+      .trim()
+      .split(/\s+/)
+      .map(part => {
+        if (part.length <= 1) return part;
+        return part[0] + '*'.repeat(Math.max(3, part.length - 1));
+      })
+      .join(' ');
+  };
+  const displayDriverName = isDemoActive ? obfuscateName(driverInfo?.driverName) : driverInfo?.driverName;
 
   if (apiError) {
     return (
@@ -329,12 +467,60 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
         {title || 'Claim Job'}
       </h2>
       
+      {jobs.length === 0 && (
+        <div className="mb-6 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 space-y-3 animate-in fade-in duration-200">
+          <div className="flex items-start gap-3">
+            <Server className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="text-xs space-y-1">
+              <div className="font-bold">No Diagrams Loaded from TDtools</div>
+              <p className="text-amber-700 dark:text-amber-300">
+                The dashboard dropdowns populate live from your TDtools API (<code className="font-mono">r_jobs</code>, <code className="font-mono">r_jobs_stp</code>, and <code className="font-mono">r_jobs_headcodes</code>). Connect and synchronize your endpoint to load all depots and diagrams.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end pt-1">
+            <button
+              type="button"
+              onClick={() => setShowTDToolsModal(true)}
+              className="px-3.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+            >
+              Connect & Sync TDtools
+            </button>
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit}>
         <div className="flex flex-col gap-6 mb-6">
           <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              Select Depot
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                Select Depot
+              </label>
+              <div className="flex items-center gap-2">
+                {sourceInfo && sourceInfo.totalJobs !== undefined && sourceInfo.totalJobs > 0 && (
+                  <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    {sourceInfo.totalJobs} diagrams
+                  </span>
+                )}
+                <button
+                  type="button"
+                  title="Refresh diagrams from TDtools"
+                  onClick={() => loadData(true)}
+                  disabled={refreshing}
+                  className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-600' : ''}`} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowTDToolsModal(true)}
+                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                >
+                  API Settings
+                </button>
+              </div>
+            </div>
             <select
               value={selectedDepot}
               onChange={(e) => setSelectedDepot(e.target.value)}
@@ -398,32 +584,98 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
           )}
         </div>
 
-        {currentJob && currentJob.pdfname && currentJob.page && (
-          <div className="w-full flex justify-center">
-            <div 
-              id="diagram-preview-box"
-              className="mt-6 mb-2 w-full lg:w-[300px] h-auto lg:h-[425px] border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-white block relative group cursor-zoom-in shadow-sm"
-              onClick={() => setIsPreviewOpen(true)}
-            >
-              <img 
-                src={`https://tdtools.co.uk/roster/diagramimg.php?pdfname=${currentJob.pdfname}&page=${currentJob.page}`} 
-                alt={`Diagram Preview for ${selectedDiagram}`} 
-                className={
-                  currentJob.isStp 
-                    ? "w-[145%] max-w-[145%] -ml-[8%] -mb-[40%] lg:mb-0 h-auto shrink-0" 
-                    : "w-[133%] max-w-[133%] -ml-[2%] -mb-[54%] lg:mb-0 h-auto shrink-0"
-                }
-                referrerPolicy="no-referrer"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-              <div
-                className="absolute top-2 right-2 p-2 bg-slate-900/60 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm shadow-sm pointer-events-none"
-              >
-                <Maximize2 className="w-5 h-5" />
+        {/* Driver & Depot Contact Information & Live Diagram Status */}
+        {selectedDiagram && (
+          <div className="mt-4">
+            {loadingDriverInfo ? (
+              <div className="flex items-center gap-2 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400">
+                <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400 shrink-0" />
+                <span>Checking roster driver & diagram allocation...</span>
               </div>
-            </div>
+            ) : driverInfo?.found && driverInfo.driverName ? (
+              <div className="relative p-3.5 rounded-xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 shadow-xs animate-in fade-in duration-200 overflow-hidden">
+                {/* Allocation Type Tag in Top Right Corner (Weekly or Daily) */}
+                {driverInfo.allocType && (
+                  <span
+                    className={`absolute top-2.5 right-2.5 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider shadow-2xs border ${
+                      driverInfo.allocType.toLowerCase().includes('week')
+                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-950/70 dark:text-purple-300 border-purple-200 dark:border-purple-800'
+                        : 'bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 border-blue-200 dark:border-blue-800'
+                    }`}
+                  >
+                    {driverInfo.allocType}
+                  </span>
+                )}
+
+                <div className="flex items-start gap-3 pr-16">
+                  <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+                    <UserIcon className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                      Roster Driver
+                    </div>
+                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate mt-0.5" title={displayDriverName}>
+                      {displayDriverName}
+                    </div>
+                    {driverInfo.depot && (
+                      <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-600 dark:text-slate-300">
+                        <MapPin className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+                        <span className="truncate">
+                          Depot: <strong className="font-semibold text-slate-900 dark:text-slate-100">{driverInfo.depot}</strong>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-500 dark:text-slate-400 italic">
+                No roster driver listed for this diagram on {selectedDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Diagram Image / PDF View (retrieved dynamically from API or local roster) */}
+        {(activeImageUrl || (activePdfName && activePage)) && (
+          <div className="w-full flex justify-center">
+            {isCancelled ? (
+              <div className="mt-6 mb-2 w-full lg:w-[300px] p-8 border border-red-200 dark:border-red-800/50 rounded-lg bg-red-50 dark:bg-red-950/20 text-center text-red-600 dark:text-red-400 font-bold uppercase tracking-wider text-sm shadow-xs">
+                Diagram Cancelled
+              </div>
+            ) : (
+              <div 
+                id="diagram-preview-box"
+                className="mt-6 mb-2 w-full lg:w-[300px] h-auto lg:h-[425px] border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-white block relative group cursor-zoom-in shadow-sm"
+                onClick={() => setIsPreviewOpen(true)}
+              >
+                <img 
+                  src={activeImageUrl || `https://tdtools.co.uk/roster/diagramimg.php?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}`} 
+                  alt={`Diagram Preview for ${selectedDiagram}`} 
+                  className={
+                    isStp 
+                      ? "w-[145%] max-w-[145%] -ml-[8%] -mb-[40%] lg:mb-0 h-auto shrink-0" 
+                      : "w-[133%] max-w-[133%] -ml-[2%] -mb-[54%] lg:mb-0 h-auto shrink-0"
+                  }
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    // Try backend proxy if direct loading fails
+                    const target = e.target as HTMLImageElement;
+                    if (!target.src.includes('/api/diagrams/image-proxy') && activePdfName && activePage) {
+                      target.src = `/api/diagrams/image-proxy?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}`;
+                    } else {
+                      target.style.display = 'none';
+                    }
+                  }}
+                />
+                <div
+                  className="absolute top-2 right-2 p-2 bg-slate-900/60 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm shadow-sm pointer-events-none"
+                >
+                  <Maximize2 className="w-5 h-5" />
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -527,7 +779,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       </form>
       
       <AnimatePresence>
-        {isPreviewOpen && currentJob && currentJob.pdfname && currentJob.page && (
+        {isPreviewOpen && (activeImageUrl || (activePdfName && activePage)) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -544,12 +796,36 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
               onClick={(e) => e.stopPropagation()}
             >
               <img 
-                src={`https://tdtools.co.uk/roster/diagramimg.php?pdfname=${currentJob.pdfname}&page=${currentJob.page}`} 
+                src={activeImageUrl || `https://tdtools.co.uk/roster/diagramimg.php?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}`} 
                 alt={`Full Preview for ${selectedDiagram}`} 
                 className="w-auto h-auto max-w-[95vw] max-h-[90vh] object-contain cursor-zoom-out" 
                 referrerPolicy="no-referrer"
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  if (!target.src.includes('/api/diagrams/image-proxy') && activePdfName && activePage) {
+                    target.src = `/api/diagrams/image-proxy?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}`;
+                  }
+                }}
                 onClick={() => setIsPreviewOpen(false)}
               />
+              {driverInfo?.found && (
+                <div className="absolute top-4 left-4 z-10 px-3.5 py-2 rounded-lg bg-slate-900/85 backdrop-blur-md text-white text-xs shadow-lg flex flex-col sm:flex-row sm:items-center gap-2 pointer-events-none">
+                  {driverInfo.driverName && (
+                    <div className="flex items-center gap-1.5">
+                      <UserIcon className="w-4 h-4 text-blue-400 shrink-0" />
+                      <span className="font-semibold">{displayDriverName}</span>
+                      {driverInfo.depot && (
+                        <span className="text-slate-300 ml-1 opacity-90">({driverInfo.depot})</span>
+                      )}
+                      {driverInfo.allocType && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-blue-500/30 text-blue-300 border border-blue-400/30">
+                          {driverInfo.allocType}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => setIsPreviewOpen(false)}
@@ -561,6 +837,15 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
           </motion.div>
         )}
       </AnimatePresence>
+
+      <TDToolsConfigModal
+        isOpen={showTDToolsModal}
+        onClose={() => setShowTDToolsModal(false)}
+        isAdmin={true}
+        onSyncSuccess={() => {
+          loadData(true);
+        }}
+      />
     </div>
   );
 }

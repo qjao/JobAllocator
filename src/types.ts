@@ -5,6 +5,7 @@ export interface User {
   role: 'admin' | 'instructor' | 'moderator' | 'driver_manager';
   isApproved: boolean;
   isDummy?: boolean;
+  isDemo?: boolean;
   approval_email_sent?: boolean;
   lastLoginAt?: string | null;
   lastAllocationAt?: string | null;
