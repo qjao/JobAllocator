@@ -459,12 +459,12 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   return (
     <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 relative ${onCancel ? 'max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain' : ''}`}>
       {onCancel && (
-        <div className="sticky top-0 z-30 -mx-6 -mt-6 mb-4 flex h-12 items-center justify-end bg-white/95 px-3 backdrop-blur dark:bg-slate-800/95">
+        <div className="sticky top-0 z-30 h-0">
           <button
             type="button"
             onClick={onCancel}
             aria-label="Close edit form"
-            className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+            className="absolute -top-3 -right-3 inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:bg-slate-100 hover:text-slate-700 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
           >
             <X className="w-5 h-5" />
           </button>
