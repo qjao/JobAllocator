@@ -194,13 +194,23 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
     $headcodesMap = [];
     $dbErrors = [];
     $tablesFound = [];
+    $identifierQuote = chr(96);
+    $queryErrors = [];
+    $safeQuery = function ($label, $sql) use ($link, &$queryErrors) {
+        try {
+            return $link->query($sql);
+        } catch (Throwable $e) {
+            $queryErrors[$label] = $e->getMessage();
+            return false;
+        }
+    };
 
     if (!empty($link)) {
         // Query LTP jobs (strictly last 1 year; excludes NULL dates and old 2021 bundles)
-        $resLtp = $link->query("SELECT * FROM \`r_jobs\` WHERE \`from\` >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
+        $resLtp = $safeQuery('r_jobs', "SELECT * FROM {$identifierQuote}r_jobs{$identifierQuote} WHERE {$identifierQuote}from{$identifierQuote} >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
         if (!$resLtp) {
-            $resLtp = $link->query("SELECT * FROM \`jobs\` WHERE \`from\` >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
-            if (!$resLtp) $dbErrors['r_jobs'] = $link->error;
+            $resLtp = $safeQuery('jobs', "SELECT * FROM {$identifierQuote}jobs{$identifierQuote} WHERE {$identifierQuote}from{$identifierQuote} >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
+            if (!$resLtp) $dbErrors['r_jobs'] = ['r_jobs' => $queryErrors['r_jobs'] ?? $link->error, 'jobs' => $queryErrors['jobs'] ?? $link->error];
         }
 
         if ($resLtp) {
@@ -231,10 +241,10 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
         }
 
         // Query STP jobs (strictly last 1 year)
-        $resStp = $link->query("SELECT * FROM \`r_jobs_stp\` WHERE \`from\` >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
+        $resStp = $safeQuery('r_jobs_stp', "SELECT * FROM {$identifierQuote}r_jobs_stp{$identifierQuote} WHERE {$identifierQuote}from{$identifierQuote} >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
         if (!$resStp) {
-            $resStp = $link->query("SELECT * FROM \`jobs_stp\` WHERE \`from\` >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
-            if (!$resStp) $dbErrors['r_jobs_stp'] = $link->error;
+            $resStp = $safeQuery('jobs_stp', "SELECT * FROM {$identifierQuote}jobs_stp{$identifierQuote} WHERE {$identifierQuote}from{$identifierQuote} >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
+            if (!$resStp) $dbErrors['r_jobs_stp'] = ['r_jobs_stp' => $queryErrors['r_jobs_stp'] ?? $link->error, 'jobs_stp' => $queryErrors['jobs_stp'] ?? $link->error];
         }
 
         if ($resStp) {
@@ -268,10 +278,10 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
         }
 
         // Query Headcodes
-        $resHc = $link->query("SELECT * FROM \`r_jobs_headcodes\`");
+        $resHc = $safeQuery('r_jobs_headcodes', "SELECT * FROM r_jobs_headcodes");
         if (!$resHc) {
-            $resHc = $link->query("SELECT * FROM \`jobs_headcodes\`");
-            if (!$resHc) $dbErrors['r_jobs_headcodes'] = $link->error;
+            $resHc = $safeQuery('jobs_headcodes', "SELECT * FROM jobs_headcodes");
+            if (!$resHc) $dbErrors['r_jobs_headcodes'] = $queryErrors['jobs_headcodes'] ?? $queryErrors['r_jobs_headcodes'] ?? $link->error;
         }
 
         if ($resHc) {
@@ -302,7 +312,7 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
 
         // Available table diagnostics if 0 jobs or errors
         if (!empty($dbErrors) || (count($r_jobs) === 0 && count($r_jobs_stp) === 0)) {
-            $resTables = $link->query("SHOW TABLES");
+            $resTables = $safeQuery('show_tables', "SHOW TABLES");
             if ($resTables) {
                 while ($tRow = $resTables->fetch_row()) {
                     $tName = $tRow[0];

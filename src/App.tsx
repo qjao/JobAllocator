@@ -132,7 +132,7 @@ export default function App() {
   }
 
   if (currentView === 'admin' && (user.role === 'admin' || user.role === 'moderator')) {
-    return <AdminUsersPage user={user} onLogout={handleLogout} onNavigate={setCurrentView as any} darkMode={darkMode} toggleDarkMode={toggleDarkMode} />;
+    return <AdminUsersPage user={user} isDemo={user.isDemo} onLogout={handleLogout} onNavigate={setCurrentView as any} darkMode={darkMode} toggleDarkMode={toggleDarkMode} />;
   }
 
   return <Dashboard user={user} onLogout={handleLogout} onNavigate={setCurrentView as any} darkMode={darkMode} toggleDarkMode={toggleDarkMode} />;

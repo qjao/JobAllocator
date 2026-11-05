@@ -229,6 +229,13 @@ async function startServer() {
     next();
   };
 
+  const requireRealAdmin = (req: any, res: any, next: any) => {
+    if (req.user?.isDemo || req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+  };
+
   // --- API Routes ---
 
   // Auth: Register
@@ -1071,7 +1078,7 @@ async function startServer() {
   });
 
   // Get TDtools API Settings
-  app.get('/api/settings/tdtools', authenticateToken, (req: any, res) => {
+  app.get('/api/settings/tdtools', authenticateToken, requireRealAdmin, (req: any, res) => {
     try {
       const { url, token } = getTDToolsConfig(req);
       res.json({
@@ -1084,8 +1091,8 @@ async function startServer() {
     }
   });
 
-  // Save TDtools API Settings (Admin / Moderator)
-  app.post('/api/settings/tdtools', authenticateToken, requireAdminOrModerator, (req: any, res) => {
+  // Save TDtools API Settings (real Admin only)
+  app.post('/api/settings/tdtools', authenticateToken, requireRealAdmin, (req: any, res) => {
     try {
       const { url, token } = req.body;
       
@@ -1109,7 +1116,7 @@ async function startServer() {
   });
 
   // Test TDtools API Connection (Catalog & Lookup)
-  app.post('/api/settings/tdtools/test', authenticateToken, requireAdminOrModerator, async (req: any, res) => {
+  app.post('/api/settings/tdtools/test', authenticateToken, requireRealAdmin, async (req: any, res) => {
     try {
       const { url, token, testJob = 'AW1104', saveOnSuccess } = req.body;
       const currentConfig = getTDToolsConfig(req);
@@ -1156,7 +1163,7 @@ async function startServer() {
       }
 
       const responseTimeMs = Date.now() - startTime;
-      const catalogSuccess = catalogResult && Array.isArray(catalogResult.jobs);
+      const catalogSuccess = catalogResult && Array.isArray(catalogResult.jobs) && catalogResult.success !== false;
       const lookupSuccess = lookupResult && lookupResult.success !== false;
 
       // Auto-save settings to database if requested
@@ -1248,7 +1255,14 @@ async function startServer() {
               const depot = extData.depot || extData.allocation?.depot || null;
               
               // Resolve allocation type: 'Weekly' vs 'Daily'
-              let allocType: 'Daily' | 'Weekly' | string = extData.allocType || extData.allocation?.alloc_type || extData.allocation?.type || '';
+              const allocation = extData.allocation;
+              const hasDailyFlag = allocation && Object.prototype.hasOwnProperty.call(allocation, 'is_daily');
+              let allocType: 'Daily' | 'Weekly' | string = hasDailyFlag
+                ? (Number(allocation.is_daily) === 1 ? 'Daily' : 'Weekly')
+                : extData.allocType || allocation?.alloc_type || allocation?.type || '';
+              if (!allocType && extData.allocation?.is_daily !== undefined) {
+                allocType = Number(extData.allocation.is_daily) === 1 ? 'Daily' : 'Weekly';
+              }
               if (!allocType) {
                 const rowType = String(extData.allocation?.source || extData.allocation?.roster_type || extData.diagram?.pdfname || '').toLowerCase();
                 if (rowType.includes('week')) {

@@ -42,6 +42,7 @@ interface DiagramSelectorProps {
   onCancel?: () => void;
   title?: string;
   isDemo?: boolean;
+  canAccessTDTools?: boolean;
   initialAllocation?: {
     jobNumber: string;
     isFullJob: boolean;
@@ -61,7 +62,7 @@ const DEPOT_NAMES: Record<string, string> = {
   'SH': 'Shenfield'
 };
 
-export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, initialAllocation, children }: DiagramSelectorProps) {
+export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, canAccessTDTools = false, initialAllocation, children }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
   
@@ -478,7 +479,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
               </p>
             </div>
           </div>
-          <div className="flex justify-end pt-1">
+          {canAccessTDTools && <div className="flex justify-end pt-1">
             <button
               type="button"
               onClick={() => setShowTDToolsModal(true)}
@@ -486,7 +487,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             >
               Connect & Sync TDtools
             </button>
-          </div>
+          </div>}
         </div>
       )}
 
@@ -498,11 +499,6 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                 Select Depot
               </label>
               <div className="flex items-center gap-2">
-                {sourceInfo && sourceInfo.totalJobs !== undefined && sourceInfo.totalJobs > 0 && (
-                  <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    {sourceInfo.totalJobs} diagrams
-                  </span>
-                )}
                 <button
                   type="button"
                   title="Refresh diagrams from TDtools"
@@ -512,13 +508,15 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-blue-600' : ''}`} />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setShowTDToolsModal(true)}
-                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                >
-                  API Settings
-                </button>
+                {canAccessTDTools && (
+                  <button
+                    type="button"
+                    onClick={() => setShowTDToolsModal(true)}
+                    className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                  >
+                    API Settings
+                  </button>
+                )}
               </div>
             </div>
             <select
@@ -839,7 +837,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       </AnimatePresence>
 
       <TDToolsConfigModal
-        isOpen={showTDToolsModal}
+        isOpen={showTDToolsModal && canAccessTDTools}
         onClose={() => setShowTDToolsModal(false)}
         isAdmin={true}
         onSyncSuccess={() => {

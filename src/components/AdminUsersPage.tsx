@@ -12,6 +12,7 @@ import TDToolsConfigModal from './TDToolsConfigModal';
 
 interface AdminUsersPageProps {
   user: User;
+  isDemo?: boolean;
   onLogout: () => void;
   onNavigate: (view: 'dashboard' | 'admin' | 'profile' | 'calendar') => void;
   darkMode: boolean;
@@ -20,7 +21,7 @@ interface AdminUsersPageProps {
 
 import Header from './Header';
 
-export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: AdminUsersPageProps) {
+export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, darkMode, toggleDarkMode }: AdminUsersPageProps) {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -423,14 +424,16 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
 
               {(user.role === 'admin' || user.role === 'moderator') && (
                 <div className="flex flex-wrap items-center gap-2 shrink-0 self-start sm:self-auto">
-                  <button
-                    type="button"
-                    onClick={() => setShowTDToolsModal(true)}
-                    className="inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
-                  >
-                    <Server className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                    <span>TDtools API</span>
-                  </button>
+                  {!user.isDemo && user.role === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => setShowTDToolsModal(true)}
+                      className="inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
+                    >
+                      <Server className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      <span>TDtools API</span>
+                    </button>
+                  )}
 
                   <button
                     type="button"
@@ -619,7 +622,7 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                   <th className="px-5 py-4 font-medium whitespace-nowrap">
                     <div className="flex items-center">API Usage (1h/24h/30d)</div>
                   </th>
-                  {(user.role === 'admin' || user.role === 'moderator') && (
+              {(user.role === 'admin' || user.role === 'moderator') && (
                     <th className="px-5 py-4 font-medium whitespace-nowrap text-right">Actions</th>
                   )}
                 </tr>
@@ -769,7 +772,7 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
                         <span className="text-slate-400">0 / 0 / 0</span>
                       )}
                     </td>
-                    {(user.role === 'admin' || user.role === 'moderator') && (
+              {(user.role === 'admin' || user.role === 'moderator') && (
                       <td className="px-5 py-4 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-2">
                           {editingUser?.id === u.id ? (
@@ -1106,7 +1109,7 @@ export default function AdminUsersPage({ user, onLogout, onNavigate, darkMode, t
       )}
 
       <TDToolsConfigModal
-        isOpen={showTDToolsModal}
+        isOpen={showTDToolsModal && !isDemo && user.role === 'admin'}
         onClose={() => setShowTDToolsModal(false)}
         isAdmin={user.role === 'admin' || user.role === 'moderator'}
       />

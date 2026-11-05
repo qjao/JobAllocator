@@ -99,14 +99,27 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
     $raw_headcodes = [];
     $dbErrors = [];
     $tablesFound = [];
+    $identifierQuote = chr(96);
+    $queryErrors = [];
+    $safeQuery = function ($label, $sql) use ($link, &$queryErrors) {
+        try {
+            return $link->query($sql);
+        } catch (Throwable $e) {
+            $queryErrors[$label] = $e->getMessage();
+            return false;
+        }
+    };
 
     if (!empty($link)) {
         // Query LTP jobs (strictly last 1 year; excludes NULL dates and old 2021 bundles)
-        $resLtp = $link->query("SELECT * FROM \`r_jobs\` WHERE \`from\` >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
+        $resLtp = $safeQuery('r_jobs', "SELECT * FROM {$identifierQuote}r_jobs{$identifierQuote} WHERE {$identifierQuote}from{$identifierQuote} >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
         if (!$resLtp) {
-            $resLtp = $link->query("SELECT * FROM \`jobs\` WHERE \`from\` >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
+            $resLtp = $safeQuery('jobs', "SELECT * FROM {$identifierQuote}jobs{$identifierQuote} WHERE {$identifierQuote}from{$identifierQuote} >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
             if (!$resLtp) {
-                $dbErrors['r_jobs'] = $link->error;
+                $dbErrors['r_jobs'] = [
+                    'r_jobs' => $queryErrors['r_jobs'] ?? $link->error,
+                    'jobs' => $queryErrors['jobs'] ?? $link->error
+                ];
             }
         }
 
@@ -138,11 +151,14 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
         }
 
         // Query STP jobs (strictly last 1 year)
-        $resStp = $link->query("SELECT * FROM \`r_jobs_stp\` WHERE \`from\` >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
+        $resStp = $safeQuery('r_jobs_stp', "SELECT * FROM {$identifierQuote}r_jobs_stp{$identifierQuote} WHERE {$identifierQuote}from{$identifierQuote} >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
         if (!$resStp) {
-            $resStp = $link->query("SELECT * FROM \`jobs_stp\` WHERE \`from\` >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
+            $resStp = $safeQuery('jobs_stp', "SELECT * FROM {$identifierQuote}jobs_stp{$identifierQuote} WHERE {$identifierQuote}from{$identifierQuote} >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)");
             if (!$resStp) {
-                $dbErrors['r_jobs_stp'] = $link->error;
+                $dbErrors['r_jobs_stp'] = [
+                    'r_jobs_stp' => $queryErrors['r_jobs_stp'] ?? $link->error,
+                    'jobs_stp' => $queryErrors['jobs_stp'] ?? $link->error
+                ];
             }
         }
 
@@ -177,11 +193,11 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
         }
 
         // Query Headcodes
-        $resHc = $link->query("SELECT * FROM `r_jobs_headcodes`");
+        $resHc = $safeQuery('r_jobs_headcodes', "SELECT * FROM r_jobs_headcodes");
         if (!$resHc) {
-            $resHc = $link->query("SELECT * FROM `jobs_headcodes`");
+            $resHc = $safeQuery('jobs_headcodes', "SELECT * FROM jobs_headcodes");
             if (!$resHc) {
-                $dbErrors['r_jobs_headcodes'] = $link->error;
+                $dbErrors['r_jobs_headcodes'] = $queryErrors['jobs_headcodes'] ?? $queryErrors['r_jobs_headcodes'] ?? $link->error;
             }
         }
 
@@ -222,7 +238,7 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
 
         // Diagnostics: check available tables in MySQL if errors or 0 jobs found
         if (!empty($dbErrors) || (count($r_jobs) === 0 && count($r_jobs_stp) === 0)) {
-            $resTables = $link->query("SHOW TABLES");
+            $resTables = $safeQuery('show_tables', "SHOW TABLES");
             if ($resTables) {
                 while ($tRow = $resTables->fetch_row()) {
                     $tName = $tRow[0];
@@ -305,11 +321,11 @@ if (!empty($link) && !empty($diagramName)) {
         $resAlloc = $stmtAlloc->get_result();
         if ($resAlloc && $allocRow = $resAlloc->fetch_assoc()) {
             $allocation = $allocRow;
-            $typeField = strtolower($allocRow['type'] ?? $allocRow['alloc_type'] ?? $allocRow['source'] ?? $allocRow['roster_type'] ?? '');
-            if (strpos($typeField, 'week') !== false) {
-                $allocType = 'Weekly';
+            if (array_key_exists('is_daily', $allocRow)) {
+                $allocType = ((int)$allocRow['is_daily'] === 1) ? 'Daily' : 'Weekly';
             } else {
-                $allocType = 'Daily';
+                $typeField = strtolower($allocRow['type'] ?? $allocRow['alloc_type'] ?? $allocRow['source'] ?? $allocRow['roster_type'] ?? '');
+                $allocType = (strpos($typeField, 'week') !== false) ? 'Weekly' : 'Daily';
             }
         }
         $stmtAlloc->close();
