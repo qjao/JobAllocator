@@ -25,9 +25,12 @@ export default function DriverEmailLink({
   className = 'inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300 hover:underline'
 }: DriverEmailLinkProps) {
   const [resolvedDriverName, setResolvedDriverName] = useState(driverName || '');
+  const [responseIsDemo, setResponseIsDemo] = useState(false);
+  const isDemoMode = Boolean(isDemo || responseIsDemo);
 
   useEffect(() => {
     setResolvedDriverName(driverName || '');
+    setResponseIsDemo(false);
     if (driverName) return;
 
     let cancelled = false;
@@ -38,6 +41,7 @@ export default function DriverEmailLink({
     })
       .then(response => response.ok ? response.json() : null)
       .then(data => {
+        if (!cancelled && data?.isDemo) setResponseIsDemo(true);
         if (!cancelled && data?.found && data.driverName) setResolvedDriverName(data.driverName);
       })
       .catch(() => {});
@@ -49,28 +53,31 @@ export default function DriverEmailLink({
 
   const nameParts = resolvedDriverName.trim().split(/\s+/).filter(Boolean);
   if (nameParts.length < 2) return null;
+  const recipientNameParts = isDemoMode
+    ? nameParts.map(part => part.length <= 1 ? part : `${part[0]}${'*'.repeat(Math.max(3, part.length - 1))}`)
+    : nameParts;
 
   const normalizeNamePart = (part: string) => part
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(isDemo ? /[^a-zA-Z0-9*-]/g : /[^a-zA-Z0-9-]/g, '')
+    .replace(isDemoMode ? /[^a-zA-Z0-9*-]/g : /[^a-zA-Z0-9-]/g, '')
     .toLowerCase();
-  const emailDomain = isDemo ? 'g***.co.uk' : 'gtsr.co.uk';
-  const email = `${normalizeNamePart(nameParts[0])}.${normalizeNamePart(nameParts[nameParts.length - 1])}@${emailDomain}`;
+  const emailDomain = isDemoMode ? 'g***.co.uk' : 'gtsr.co.uk';
+  const email = `${normalizeNamePart(recipientNameParts[0])}.${normalizeNamePart(recipientNameParts[recipientNameParts.length - 1])}@${emailDomain}`;
   const [year, month, day] = date.slice(0, 10).split('-');
   const formattedDate = year && month && day ? `${day}/${month}/${year}` : date;
   const allocationDetails = isFullJob || headcodes.length === 0
     ? `Would you be happy for me to use the full ${jobNumber} diagram on ${formattedDate} for driver instruction?`
     : `Would you be happy for me to use ${jobNumber} on ${formattedDate} for driver instruction, covering headcodes ${headcodes.join(', ')}?`;
   const trimmedNotes = notes.trim();
-  const body = `Hi ${nameParts[0]},\n\n${allocationDetails}${trimmedNotes ? `\n\nFor context: ${trimmedNotes}` : ''}\n\nPlease let me know if that would be a problem.\n\nMany thanks,\n${currentUserName}`;
+  const body = `Hi ${recipientNameParts[0]},\n\n${allocationDetails}${trimmedNotes ? `\n\nFor context: ${trimmedNotes}` : ''}\n\nPlease let me know if that would be a problem.\n\nMany thanks,\n${currentUserName}`;
   const subject = `${jobNumber} - ${formattedDate} - DI Cut out`;
   const mailto = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
   return (
     <a href={mailto} className={className}>
       <Mail className="w-4 h-4" />
-      {isDemo ? `Email driver (${email})` : 'Email driver (Confirm email address)'}
+      Email driver (Confirm email address)
     </a>
   );
 }

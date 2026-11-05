@@ -61,6 +61,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
   const [users, setUsers] = useState<User[]>([]);
   const [selectedInstructorId, setSelectedInstructorId] = useState(user.id);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const isDemoUser = Boolean(user.isDemo || user.email.toLowerCase().startsWith('demo-'));
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
 
@@ -455,9 +456,9 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
           {/* Left Column: Form */}
           <div className="lg:col-span-1">
             <DiagramSelector 
-              isDemo={user.isDemo}
-              canAccessTDTools={!user.isDemo && user.role === 'admin'}
-              canRefreshDiagrams={!user.isDemo && (user.role === 'admin' || user.role === 'moderator')}
+              isDemo={isDemoUser}
+              canAccessTDTools={!isDemoUser && user.role === 'admin'}
+              canRefreshDiagrams={!isDemoUser && (user.role === 'admin' || user.role === 'moderator')}
               currentUserName={user.name}
               darkMode={darkMode}
               selectedDate={selectedDate}
@@ -611,7 +612,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
                                   headcodes={alloc.headcodes || []}
                                   notes={alloc.notes}
                                   currentUserName={user.name}
-                                  isDemo={user.isDemo}
+                                  isDemo={isDemoUser}
                                 />
                               </div>
                             )}
@@ -686,9 +687,9 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200 overflow-y-auto">
           <div className="max-w-md w-full my-8 relative">
             <DiagramSelector
-              isDemo={user.isDemo}
-              canAccessTDTools={!user.isDemo && user.role === 'admin'}
-              canRefreshDiagrams={!user.isDemo && (user.role === 'admin' || user.role === 'moderator')}
+              isDemo={isDemoUser}
+              canAccessTDTools={!isDemoUser && user.role === 'admin'}
+              canRefreshDiagrams={!isDemoUser && (user.role === 'admin' || user.role === 'moderator')}
               currentUserName={user.name}
               darkMode={darkMode}
               selectedDate={new Date(editingAllocation.date)}
