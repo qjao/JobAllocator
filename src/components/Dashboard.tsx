@@ -456,7 +456,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
             <DiagramSelector 
               isDemo={user.isDemo}
               canAccessTDTools={!user.isDemo && user.role === 'admin'}
-              canRefreshDiagrams={user.role === 'admin' || user.role === 'moderator'}
+              canRefreshDiagrams={!user.isDemo && (user.role === 'admin' || user.role === 'moderator')}
               darkMode={darkMode}
               selectedDate={selectedDate}
               allocations={allocations}
@@ -673,7 +673,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
             <DiagramSelector
               isDemo={user.isDemo}
               canAccessTDTools={!user.isDemo && user.role === 'admin'}
-              canRefreshDiagrams={user.role === 'admin' || user.role === 'moderator'}
+              canRefreshDiagrams={!user.isDemo && (user.role === 'admin' || user.role === 'moderator')}
               darkMode={darkMode}
               selectedDate={new Date(editingAllocation.date)}
               allocations={allocations.filter(a => a.id !== editingAllocation.id)}
