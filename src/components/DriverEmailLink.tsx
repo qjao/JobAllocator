@@ -28,7 +28,7 @@ export default function DriverEmailLink({
 
   useEffect(() => {
     setResolvedDriverName(driverName || '');
-    if (driverName || isDemo) return;
+    if (driverName) return;
 
     let cancelled = false;
     const token = localStorage.getItem('token');
@@ -45,7 +45,7 @@ export default function DriverEmailLink({
     return () => { cancelled = true; };
   }, [driverName, isDemo, date, jobNumber]);
 
-  if (isDemo || !resolvedDriverName) return null;
+  if (!resolvedDriverName) return null;
 
   const nameParts = resolvedDriverName.trim().split(/\s+/).filter(Boolean);
   if (nameParts.length < 2) return null;
@@ -53,9 +53,10 @@ export default function DriverEmailLink({
   const normalizeNamePart = (part: string) => part
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9-]/g, '')
+    .replace(isDemo ? /[^a-zA-Z0-9*-]/g : /[^a-zA-Z0-9-]/g, '')
     .toLowerCase();
-  const email = `${normalizeNamePart(nameParts[0])}.${normalizeNamePart(nameParts[nameParts.length - 1])}@gtsr.co.uk`;
+  const emailDomain = isDemo ? 'g***.co.uk' : 'gtsr.co.uk';
+  const email = `${normalizeNamePart(nameParts[0])}.${normalizeNamePart(nameParts[nameParts.length - 1])}@${emailDomain}`;
   const [year, month, day] = date.slice(0, 10).split('-');
   const formattedDate = year && month && day ? `${day}/${month}/${year}` : date;
   const allocationDetails = isFullJob || headcodes.length === 0
@@ -69,7 +70,7 @@ export default function DriverEmailLink({
   return (
     <a href={mailto} className={className}>
       <Mail className="w-4 h-4" />
-      Email driver (Confirm email address)
+      {isDemo ? `Email driver (${email})` : 'Email driver (Confirm email address)'}
     </a>
   );
 }

@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
+import { createHash } from 'crypto';
 import { XMLParser } from 'fast-xml-parser';
 import { sendPasswordResetEmail, sendNewRegistrationAlert, sendInstructorApprovedEmail, isSmtpConfigured } from './emailService';
 const portArgIndex = process.argv.indexOf('--port');
@@ -930,6 +931,12 @@ async function startServer() {
     return { url, token };
   }
 
+  // Reuse recent TDtools driver lookups across dashboard cards and form selections.
+  const driverInfoCache = new Map<string, { expiresAt: number; data: any }>();
+  const driverInfoRequestsInFlight = new Map<string, Promise<any | null>>();
+  const DRIVER_INFO_CACHE_TTL_MS = 60 * 1000;
+  const MAX_DRIVER_INFO_CACHE_ENTRIES = 1000;
+
   // Diagrams API: serve diagrams from live TDtools API or fallback data directory
   app.get("/api/diagrams", async (req, res) => {
     // Prevent any browser or proxy caching
@@ -1241,15 +1248,52 @@ async function startServer() {
           targetUrl.searchParams.set('name', jobStr);
           targetUrl.searchParams.set('job', jobStr);
 
-          const externalRes = await fetch(targetUrl.toString(), {
-            headers: {
-              ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {})
-            }
-          });
+          const targetUrlString = targetUrl.toString();
+          const cacheKey = createHash('sha256')
+            .update(`${targetUrlString}\n${apiToken}`)
+            .digest('hex');
+          const cachedEntry = driverInfoCache.get(cacheKey);
+          let extData: any = null;
 
-          if (externalRes.ok) {
-            const extData = await externalRes.json();
-            if (extData && extData.success !== false) {
+          if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
+            extData = cachedEntry.data;
+          } else {
+            if (cachedEntry) driverInfoCache.delete(cacheKey);
+
+            let pendingRequest = driverInfoRequestsInFlight.get(cacheKey);
+            if (!pendingRequest) {
+              pendingRequest = (async () => {
+                const externalRes = await fetch(targetUrlString, {
+                  headers: {
+                    ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {})
+                  }
+                });
+                return externalRes.ok ? externalRes.json() : null;
+              })();
+              driverInfoRequestsInFlight.set(cacheKey, pendingRequest);
+            }
+
+            try {
+              extData = await pendingRequest;
+              if (extData && extData.success !== false) {
+                while (driverInfoCache.size >= MAX_DRIVER_INFO_CACHE_ENTRIES) {
+                  const oldestKey = driverInfoCache.keys().next().value;
+                  if (oldestKey === undefined) break;
+                  driverInfoCache.delete(oldestKey);
+                }
+                driverInfoCache.set(cacheKey, {
+                  expiresAt: Date.now() + DRIVER_INFO_CACHE_TTL_MS,
+                  data: extData
+                });
+              }
+            } finally {
+              if (driverInfoRequestsInFlight.get(cacheKey) === pendingRequest) {
+                driverInfoRequestsInFlight.delete(cacheKey);
+              }
+            }
+          }
+
+          if (extData && extData.success !== false) {
               const rawDriverName = extData.driverName || extData.allocation?.driver_name || extData.driver_name || null;
               const driverName = (isDemo && rawDriverName) ? obfuscateDriverName(rawDriverName) : rawDriverName;
               const depot = extData.depot || extData.allocation?.depot || null;
