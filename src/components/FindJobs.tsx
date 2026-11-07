@@ -18,6 +18,7 @@ interface TrainService {
   etd: string;
   platform: string;
   operator: string;
+  operatorCode?: string;
   destination: string;
   headcode: string;
 }
@@ -107,6 +108,7 @@ import Header from './Header';
 import { getLondonDate } from '../lib/utils';
 
 export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: FindJobsProps) {
+  const isDemoUser = Boolean(user.isDemo || user.email?.toLowerCase().startsWith('demo-'));
   const [crs, setCrs] = useState('PADTLL');
   const [date, setDate] = useState('');
   const [hour, setHour] = useState('');
@@ -146,14 +148,79 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const dd = String(now.getDate()).padStart(2, '0');
-    setDate(`${yyyy}-${mm}-${dd}`);
+    const todayStr = `${yyyy}-${mm}-${dd}`;
+    setDate(todayStr);
     setHour(String(now.getHours()).padStart(2, '0'));
     setMinute(String(now.getMinutes()).padStart(2, '0'));
     
-    if (user.role === 'admin' || user.role === 'moderator') {
+    if (isDemoUser) {
+      setHasSearched(true);
+      setServices([
+        {
+          std: '07:30',
+          date: todayStr,
+          etd: 'On time',
+          platform: 'A',
+          operator: 'Elizabeth Line',
+          operatorCode: 'XR',
+          destination: 'Shenfield',
+          headcode: '9W36'
+        },
+        {
+          std: '07:35',
+          date: todayStr,
+          etd: 'On time',
+          platform: 'B',
+          operator: 'Elizabeth Line',
+          operatorCode: 'XR',
+          destination: 'Abbey Wood',
+          headcode: '9U38'
+        },
+        {
+          std: '07:42',
+          date: todayStr,
+          etd: 'Exp. 07:45',
+          platform: 'A',
+          operator: 'Elizabeth Line',
+          operatorCode: 'XR',
+          destination: 'Gidea Park',
+          headcode: '9W40'
+        },
+        {
+          std: '07:48',
+          date: todayStr,
+          etd: 'On time',
+          platform: 'B',
+          operator: 'Elizabeth Line',
+          operatorCode: 'XR',
+          destination: 'Heathrow Terminal 4',
+          headcode: '9H42'
+        },
+        {
+          std: '07:55',
+          date: todayStr,
+          etd: 'On time',
+          platform: 'A',
+          operator: 'Elizabeth Line',
+          operatorCode: 'XR',
+          destination: 'Reading',
+          headcode: '9R44'
+        },
+        {
+          std: '08:02',
+          date: todayStr,
+          etd: 'On time',
+          platform: 'B',
+          operator: 'Elizabeth Line',
+          operatorCode: 'XR',
+          destination: 'Shenfield',
+          headcode: '9W46'
+        }
+      ]);
+    } else if (user.role === 'admin' || user.role === 'moderator') {
       fetchApiStats();
     }
-  }, [user.role]);
+  }, [user.role, isDemoUser]);
 
   const fetchApiStats = async () => {
     try {
@@ -196,6 +263,9 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isDemoUser) {
+      return;
+    }
     const cleanCrs = crs.trim().toUpperCase();
     if (!cleanCrs) {
       setError('CRS code is required.');
@@ -313,13 +383,25 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
         </div>
 
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 transition-colors">
+          {isDemoUser && (
+            <div className="mb-5 p-3.5 bg-blue-50/80 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 rounded-lg flex items-center justify-between text-xs text-blue-700 dark:text-blue-300">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 uppercase tracking-wide text-[10px]">
+                  Demo Mode • View Only
+                </span>
+                <span>Live departure search is disabled in demo mode. Displaying sample Elizabeth Line services below.</span>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSearch} className="flex flex-col md:flex-row md:items-end gap-3">
             <div className="flex-1 w-full md:w-auto min-w-0">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 truncate">Origin</label>
               <select
                 value={crs}
                 onChange={(e) => setCrs(e.target.value)}
-                className="w-full px-2 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-[13px] appearance-none"
+                disabled={isDemoUser}
+                className="w-full px-2 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-[13px] appearance-none disabled:opacity-60 disabled:cursor-not-allowed"
                 required
               >
                 <option value="" disabled>Select station...</option>
@@ -336,7 +418,8 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
               <select
                 value={filterCrs}
                 onChange={(e) => setFilterCrs(e.target.value)}
-                className="w-full px-2 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-[13px] appearance-none"
+                disabled={isDemoUser}
+                className="w-full px-2 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-[13px] appearance-none disabled:opacity-60 disabled:cursor-not-allowed"
                 required
               >
                 <option value="" disabled>Select station...</option>
@@ -355,13 +438,15 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full sm:w-[125px] px-1.5 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-sm"
+                  disabled={isDemoUser}
+                  className="w-full sm:w-[125px] px-1.5 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                   required
                 />
                 <select
                   value={hour}
                   onChange={(e) => setHour(e.target.value)}
-                  className="w-12 px-1 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-sm appearance-none text-center"
+                  disabled={isDemoUser}
+                  className="w-12 px-1 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-sm appearance-none text-center disabled:opacity-60 disabled:cursor-not-allowed"
                   required
                 >
                   {Array.from({ length: 24 }).map((_, i) => (
@@ -372,7 +457,8 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                 <select
                   value={minute}
                   onChange={(e) => setMinute(e.target.value)}
-                  className="w-12 px-1 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-sm appearance-none text-center"
+                  disabled={isDemoUser}
+                  className="w-12 px-1 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-sm appearance-none text-center disabled:opacity-60 disabled:cursor-not-allowed"
                   required
                 >
                   {Array.from({ length: 60 }).map((_, i) => (
@@ -384,15 +470,16 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
 
             <button
               type="submit"
-              disabled={loading || !crs.trim()}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 h-[42px] w-full md:w-auto shrink-0"
+              disabled={isDemoUser || loading || !crs.trim()}
+              title={isDemoUser ? 'Departure searching is disabled in Demo Mode (View Only)' : undefined}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2.5 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 h-[42px] w-full md:w-auto shrink-0 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <Search className="w-4 h-4" />
               )}
-              <span>Search</span>
+              <span>{isDemoUser ? 'View Only' : 'Search'}</span>
             </button>
           </form>
 
@@ -470,7 +557,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
           </div>
         )}
 
-        {(user.role === 'admin' || user.role === 'moderator') && (
+        {!isDemoUser && (user.role === 'admin' || user.role === 'moderator') && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors mt-8">
             <button 
               onClick={() => setShowDebug(!showDebug)}
@@ -648,7 +735,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
       </main>
 
       {showHelpModal && (
-        <HelpModal onClose={() => setShowHelpModal(false)} />
+        <HelpModal onClose={() => setShowHelpModal(false)} user={user} />
       )}
     </div>
   );

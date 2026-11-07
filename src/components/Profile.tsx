@@ -219,7 +219,7 @@ export default function Profile({ user, onLogout, onNavigate, darkMode, toggleDa
         </div>
       </main>
       {showHelpModal && (
-        <HelpModal onClose={() => setShowHelpModal(false)} />
+        <HelpModal onClose={() => setShowHelpModal(false)} user={user} />
       )}
     </div>
   );

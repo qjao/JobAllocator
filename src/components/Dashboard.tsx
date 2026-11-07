@@ -758,7 +758,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
         </div>
       )}
       {showHelpModal && (
-        <HelpModal onClose={() => setShowHelpModal(false)} />
+        <HelpModal onClose={() => setShowHelpModal(false)} user={user} />
       )}
     </div>
   );

@@ -842,7 +842,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
         </div>
       )}
       {showHelpModal && (
-        <HelpModal onClose={() => setShowHelpModal(false)} />
+        <HelpModal onClose={() => setShowHelpModal(false)} user={user} />
       )}
     </div>
   );

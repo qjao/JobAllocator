@@ -1105,7 +1105,7 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
       )}
 
       {showHelpModal && (
-        <HelpModal onClose={() => setShowHelpModal(false)} />
+        <HelpModal onClose={() => setShowHelpModal(false)} user={user} />
       )}
 
       <TDToolsConfigModal

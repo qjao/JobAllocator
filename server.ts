@@ -1539,6 +1539,21 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
       return res.status(400).json({ error: 'CRS code is required' });
     }
     
+    if ((req as any).user?.isDemo) {
+      const todayStr = initialTime ? initialTime.substring(0, 10) : new Date().toISOString().substring(0, 10);
+      return res.json({
+        isDemo: true,
+        services: [
+          { std: '07:30', date: todayStr, etd: 'On time', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Shenfield', headcode: '9W36' },
+          { std: '07:35', date: todayStr, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Abbey Wood', headcode: '9U38' },
+          { std: '07:42', date: todayStr, etd: 'Exp. 07:45', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Gidea Park', headcode: '9W40' },
+          { std: '07:48', date: todayStr, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Heathrow Terminal 4', headcode: '9H42' },
+          { std: '07:55', date: todayStr, etd: 'On time', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Reading', headcode: '9R44' },
+          { std: '08:02', date: todayStr, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Shenfield', headcode: '9W46' }
+        ]
+      });
+    }
+
     const targetCrsKey = crs.toUpperCase();
     const isOriginTiplocOnly = targetCrsKey.length > 3;
     const isDestinationTiplocOnly = filterCrs && filterCrs.length > 3;
@@ -1580,7 +1595,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
           <ldb:timeWindow>120</ldb:timeWindow>
           <ldb:filterTiploc>${getTiploc(targetCrsKey)}</ldb:filterTiploc>
           <ldb:filterType>from</ldb:filterType>
-          <ldb:filterTOC>XR</ldb:filterTOC>
+          <ldb:operatorCode>XR</ldb:operatorCode>
           <ldb:getNonPassengerServices>true</ldb:getNonPassengerServices>`;
       } else if (isOriginTiplocOnly && !filterCrs) {
           // Fallback if no destination is selected but origin is tiploc only
@@ -1590,7 +1605,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
           <ldb:tiploc>${getTiploc(targetCrsKey)}</ldb:tiploc>
           ${timeElement}
           <ldb:timeWindow>120</ldb:timeWindow>
-          <ldb:filterTOC>XR</ldb:filterTOC>
+          <ldb:operatorCode>XR</ldb:operatorCode>
           <ldb:getNonPassengerServices>true</ldb:getNonPassengerServices>`;
       } else if (isDestinationTiplocOnly) {
           requestName = 'GetDepartureBoardByTIPLOCRequest';
@@ -1601,7 +1616,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
           <ldb:timeWindow>120</ldb:timeWindow>
           <ldb:filterTiploc>${getTiploc(filterCrs.toUpperCase())}</ldb:filterTiploc>
           <ldb:filterType>to</ldb:filterType>
-          <ldb:filterTOC>XR</ldb:filterTOC>
+          <ldb:operatorCode>XR</ldb:operatorCode>
           <ldb:getNonPassengerServices>true</ldb:getNonPassengerServices>`;
       } else {
           requestName = 'GetDepBoardWithDetailsRequest';
@@ -1610,7 +1625,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
           <ldb:crs>${targetCrsKey}</ldb:crs>
           ${timeElement}
           <ldb:timeWindow>120</ldb:timeWindow>
-          <ldb:filterTOC>XR</ldb:filterTOC>
+          <ldb:operatorCode>XR</ldb:operatorCode>
           <ldb:getNonPassengerServices>false</ldb:getNonPassengerServices>`;
       }
 
@@ -1693,6 +1708,16 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
         if (servicesArray.length === 0) break;
 
         for (const s of servicesArray) {
+          const opCode = String(s.operatorCode || s['operatorCode'] || '').trim().toUpperCase();
+          const opName = String(s.operator || s['operator'] || '').toLowerCase();
+          // Strictly filter so only Elizabeth Line (TOC code XR) services are kept
+          if (opCode && opCode !== 'XR') {
+            continue;
+          }
+          if (!opCode && opName && !opName.includes('elizabeth')) {
+            continue;
+          }
+
           const uniqueKey = `${s.rsid || s.trainid}_${s.std}`;
           if (!allServicesMap.has(uniqueKey)) {
             allServicesMap.set(uniqueKey, s);
@@ -1717,6 +1742,11 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
       });
 
       let servicesArray = Array.from(allServicesMap.values()).filter((s: any) => {
+        const opCode = String(s.operatorCode || s['operatorCode'] || '').trim().toUpperCase();
+        const opName = String(s.operator || s['operator'] || '').toLowerCase();
+        if (opCode && opCode !== 'XR') return false;
+        if (!opCode && opName && !opName.includes('elizabeth')) return false;
+
         const sTime = s.std ? String(s.std).substring(0, 19) : (s.sta ? String(s.sta).substring(0, 19) : '');
         return sTime >= targetTime;
       });
@@ -1810,6 +1840,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
           etd: status,
           platform: s.platform || '-',
           operator: s.operator || '',
+          operatorCode: s.operatorCode || 'XR',
           destination,
           headcode: s.trainid || (s.rsid ? s.rsid.substring(0, 4) : 'N/A'),
           raw: s
@@ -1849,7 +1880,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
 
   // NRE API: Clear Cache
   app.post('/api/nre/cache/clear', authenticateToken, (req: any, res) => {
-    if (req.user.role !== 'admin' && req.user.role !== 'moderator') {
+    if (req.user?.isDemo || (req.user.role !== 'admin' && req.user.role !== 'moderator')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
     stationCache.clear();
@@ -1858,7 +1889,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
 
   // Admin: API Stats
   app.get('/api/admin/api-stats', authenticateToken, (req: any, res) => {
-    if (req.user.role !== 'admin' && req.user.role !== 'moderator') {
+    if (req.user?.isDemo || (req.user.role !== 'admin' && req.user.role !== 'moderator')) {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
