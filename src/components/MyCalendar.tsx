@@ -530,7 +530,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                                   <span className="truncate">{alloc.instructorName}</span>
                                   {(() => {
                                     const allocatedUser = users.find(u => u.id === alloc.instructorId || u.name === alloc.instructorName);
-                                    if (allocatedUser?.isDummy) {
+                                    if (allocatedUser?.isDummy || allocatedUser?.role === 'driver_manager') {
                                       return (
                                         <span 
                                           className={`px-1 py-0.5 rounded text-[9px] font-semibold leading-none shrink-0 ${
@@ -630,7 +630,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                   <span className="font-medium text-slate-900 dark:text-slate-100">{selectedAllocation.instructorName}</span>
                   {(() => {
                     const allocatedUser = users.find(u => u.id === selectedAllocation.instructorId || u.name === selectedAllocation.instructorName);
-                    if (allocatedUser?.isDummy) {
+                    if (allocatedUser?.isDummy || allocatedUser?.role === 'driver_manager') {
                       return (
                         <span 
                           className={`px-1.5 py-0.5 rounded text-[10px] font-semibold inline-flex items-center gap-1 ${
