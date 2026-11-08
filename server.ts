@@ -583,9 +583,8 @@ async function startServer() {
         }
       } else {
         // Admin
-        const finalRole = targetUser.isDummy 
-          ? ((role === 'driver_manager' || role === 'instructor') ? role : targetUser.role) 
-          : role;
+        const allowedRoles = ['admin', 'moderator', 'instructor', 'driver_manager'];
+        const finalRole = allowedRoles.includes(role) ? role : targetUser.role;
 
         getDb(req).prepare('UPDATE users SET name = ?, email = ?, role = ?, isApproved = ? WHERE id = ?')
           .run(name, email, finalRole, isApproved ? 1 : 0, req.params.id);
@@ -625,9 +624,9 @@ async function startServer() {
     try {
       let pendingUsers: any[] = [];
       if (req.user.role === 'moderator') {
-        // Moderators can only approve instructor accounts
+        // Moderators can approve instructor and driver manager accounts.
         pendingUsers = getDb(req).prepare(
-          "SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE (isApproved = 0 OR isApproved IS NULL) AND role = 'instructor'"
+          "SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE (isApproved = 0 OR isApproved IS NULL) AND role IN ('instructor', 'driver_manager')"
         ).all() as any[];
       } else {
         // Admins can approve all pending accounts

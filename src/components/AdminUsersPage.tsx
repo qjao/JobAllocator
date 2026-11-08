@@ -143,7 +143,7 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
       if (u.isDummy) return false;
       if (u.isApproved) return false;
       if (user.role === 'moderator') {
-        return u.role === 'instructor';
+        return u.role === 'instructor' || u.role === 'driver_manager';
       }
       return true;
     });
@@ -654,6 +654,7 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
                               ) : (
                                 <>
                                   <option value="instructor">Instructor</option>
+                                  <option value="driver_manager">Driver Manager</option>
                                   <option value="moderator">Moderator</option>
                                   {user.role === 'admin' && <option value="admin">Admin</option>}
                                 </>
