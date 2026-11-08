@@ -675,16 +675,12 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
                               {u.name}
                             </span>
 
-                            {/* Role badge (Instructor or Driver Manager) */}
-                            {u.isDummy && (
+                            {/* Role badge for Driver Managers */}
+                            {u.role === 'driver_manager' && (
                               <span 
-                                className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
-                                  u.role === 'driver_manager'
-                                    ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60'
-                                    : 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60'
-                                }`}
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/60"
                               >
-                                {u.role === 'driver_manager' ? 'Driver Manager' : 'Instructor'}
+                                Driver Manager
                               </span>
                             )}
 
