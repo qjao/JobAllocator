@@ -3,6 +3,7 @@ build/
 data/
 dist/
 coverage/
+public/
 .DS_Store
 *.log
 .env*
