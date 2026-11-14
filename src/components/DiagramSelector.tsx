@@ -309,23 +309,35 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   // Handle diagram selection change without clearing headcodes if same diagram
   const claimedHeadcodes = React.useMemo(() => {
     if (!selectedDiagram) return new Set<string>();
-    const matching = allocations.filter(a => a.jobNumber === selectedDiagram);
+    const normSelected = selectedDiagram.trim().toUpperCase();
+    const matching = allocations.filter(a => a.jobNumber.trim().toUpperCase() === normSelected);
     const claimed = new Set<string>();
     matching.forEach(a => {
       if (!a.isFullJob && Array.isArray(a.headcodes)) {
-        a.headcodes.forEach(hc => claimed.add(hc));
+        a.headcodes.forEach(hc => {
+          const normalized = String(hc || '').trim().toUpperCase();
+          if (normalized) claimed.add(normalized);
+        });
       }
     });
     return claimed;
   }, [selectedDiagram, allocations]);
 
-  const isPartiallyBooked = claimedHeadcodes.size > 0;
+  const isSelectedFullyBooked = React.useMemo(() => {
+    if (!selectedDiagram) return false;
+    const normSelected = selectedDiagram.trim().toUpperCase();
+    const matching = allocations.filter(a => a.jobNumber.trim().toUpperCase() === normSelected);
+    if (matching.some(a => a.isFullJob)) return true;
+    return availableHeadcodes.length > 0 && availableHeadcodes.every(hc => claimedHeadcodes.has(hc));
+  }, [selectedDiagram, allocations, availableHeadcodes, claimedHeadcodes]);
+
+  const isPartiallyBooked = !isSelectedFullyBooked && claimedHeadcodes.size > 0;
 
   useEffect(() => {
-    if (isPartiallyBooked && isFullDiagram) {
+    if ((isPartiallyBooked || isSelectedFullyBooked) && isFullDiagram) {
       setIsFullDiagram(false);
     }
-  }, [isPartiallyBooked, isFullDiagram]);
+  }, [isPartiallyBooked, isSelectedFullyBooked, isFullDiagram]);
 
   useEffect(() => {
     if (selectedDiagram) {
@@ -565,14 +577,18 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                   }
                   setSelectedDiagram(newDiagram);
                   
-                  const matching = allocations.filter(a => a.jobNumber === newDiagram);
-                  const claimed = new Set();
+                  const normNew = newDiagram.trim().toUpperCase();
+                  const matching = allocations.filter(a => a.jobNumber.trim().toUpperCase() === normNew);
+                  const claimed = new Set<string>();
                   matching.forEach(a => {
                     if (!a.isFullJob && Array.isArray(a.headcodes)) {
-                      a.headcodes.forEach(hc => claimed.add(hc));
+                      a.headcodes.forEach(hc => {
+                        const normalized = String(hc || '').trim().toUpperCase();
+                        if (normalized) claimed.add(normalized);
+                      });
                     }
                   });
-                  const isPartiallyBookedNew = claimed.size > 0;
+                  const isPartiallyBookedNew = claimed.size > 0 || matching.some(a => a.isFullJob);
                   
                   setIsFullDiagram(!isPartiallyBookedNew);
                   setSelectedHeadcodeIndices([]);
@@ -582,8 +598,23 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
               >
                 <option value="">-- Select Diagram --</option>
                 {availableDiagrams.map(diagram => {
-                  const matchingAllocations = allocations.filter(a => a.jobNumber === diagram.name);
-                  const isFullyBooked = matchingAllocations.some(a => a.isFullJob);
+                  const normDiagramName = diagram.name.trim().toUpperCase();
+                  const matchingAllocations = allocations.filter(a => a.jobNumber.trim().toUpperCase() === normDiagramName);
+                  const claimedSet = new Set<string>();
+                  matchingAllocations.forEach(a => {
+                    if (!a.isFullJob && Array.isArray(a.headcodes)) {
+                      a.headcodes.forEach(hc => {
+                        const normalized = String(hc || '').trim().toUpperCase();
+                        if (normalized) claimedSet.add(normalized);
+                      });
+                    }
+                  });
+                  const key = diagram.isStp ? `stp_${diagram.jobid}` : `ltp_${diagram.jobid}`;
+                  const diagramHeadcodes = (headcodesMap[key] || [])
+                    .map(raw => String(raw || '').trim().toUpperCase())
+                    .filter(Boolean);
+                  const allHeadcodesClaimed = diagramHeadcodes.length > 0 && diagramHeadcodes.every(hc => claimedSet.has(hc));
+                  const isFullyBooked = matchingAllocations.some(a => a.isFullJob) || allHeadcodesClaimed;
                   const isPartiallyBooked = !isFullyBooked && matchingAllocations.length > 0;
                   const isDisabled = diagram.cancel || isFullyBooked;
                   
@@ -707,23 +738,27 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             </label>
             
             <div className="flex flex-col gap-4">
-              <label className={`flex items-start space-x-3 p-2 rounded-lg transition-colors -ml-2 ${isPartiallyBooked ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30'}`}>
+              <label className={`flex items-start space-x-3 p-2 rounded-lg transition-colors -ml-2 ${(isPartiallyBooked || isSelectedFullyBooked) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30'}`}>
                 <input
                   type="checkbox"
-                  checked={isFullDiagram}
-                  disabled={isPartiallyBooked}
+                  checked={isFullDiagram && !isPartiallyBooked && !isSelectedFullyBooked}
+                  disabled={isPartiallyBooked || isSelectedFullyBooked}
                   onChange={handleFullDiagramToggle}
                   className="w-5 h-5 mt-0.5 shrink-0 rounded border-slate-300 dark:border-slate-500 text-blue-600 focus:ring-blue-500 bg-white dark:bg-slate-800 disabled:opacity-50"
                 />
                 <span className="text-slate-900 dark:text-white font-medium flex flex-col">
                   <span>Claim Full Diagram</span>
-                  {isPartiallyBooked && <span className="text-sm text-slate-500 dark:text-slate-400 font-normal leading-tight mt-0.5">(Unavailable - Partially Booked)</span>}
+                  {isSelectedFullyBooked ? (
+                    <span className="text-sm text-slate-500 dark:text-slate-400 font-normal leading-tight mt-0.5">(Unavailable - Fully Booked)</span>
+                  ) : isPartiallyBooked ? (
+                    <span className="text-sm text-slate-500 dark:text-slate-400 font-normal leading-tight mt-0.5">(Unavailable - Partially Booked)</span>
+                  ) : null}
                 </span>
               </label>
               
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mt-1">
                 {availableHeadcodes.map((hc, idx) => {
-                  const isClaimed = claimedHeadcodes.has(hc);
+                  const isClaimed = isSelectedFullyBooked || claimedHeadcodes.has(hc);
                   return (
                     <label key={`${hc}-${idx}`} className={`flex items-center gap-2 p-2 rounded-lg border transition-colors ${isClaimed ? 'bg-slate-100 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700 opacity-60 cursor-not-allowed' : 'cursor-pointer bg-slate-50 dark:bg-slate-900/50 border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-700'}`}>
                       <input
@@ -787,7 +822,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             </div>
           )}
 
-          {!initialAllocation && driverInfo?.driverName && (
+          {!initialAllocation && driverInfo?.driverName && !isSelectedFullyBooked && (
             <div className="mb-3">
               <DriverEmailLink
                 driverName={driverInfo.driverName}
@@ -806,7 +841,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
           <div className="pt-2">
             <button
               type="submit"
-              disabled={!selectedDiagram || submitting || (!isFullDiagram && selectedHeadcodeIndices.length === 0)}
+              disabled={!selectedDiagram || submitting || isSelectedFullyBooked || (!isFullDiagram && selectedHeadcodeIndices.length === 0)}
               className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-3 px-4 rounded-lg transition-colors shadow-sm"
             >
               {submitting ? 'Saving...' : (initialAllocation ? 'Save Changes' : 'Add Allocation')}
