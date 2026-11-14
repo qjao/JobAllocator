@@ -5,10 +5,11 @@ import {
   AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Moon, Sun, 
   Calendar as CalendarIcon, User as UserIcon, HelpCircle, Users, 
   UserX, ShieldCheck, GraduationCap, CheckCheck, UserPlus,
-  Briefcase, Server
+  Briefcase, Server, Train
 } from 'lucide-react';
 import HelpModal from './HelpModal';
 import TDToolsConfigModal from './TDToolsConfigModal';
+import NREConfigModal from './NREConfigModal';
 
 interface AdminUsersPageProps {
   user: User;
@@ -35,6 +36,7 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
   const [sortConfig, setSortConfig] = useState<{ key: keyof User; direction: 'asc' | 'desc' } | null>(null);
   const [deleteTargetUser, setDeleteTargetUser] = useState<User | null>(null);
   const [showTDToolsModal, setShowTDToolsModal] = useState(false);
+  const [showNREModal, setShowNREModal] = useState(false);
 
   // User profile creation state
   const [showCreateProfileModal, setShowCreateProfileModal] = useState(false);
@@ -425,14 +427,25 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
               {(user.role === 'admin' || user.role === 'moderator') && (
                 <div className="flex flex-wrap items-center gap-2 shrink-0 self-start sm:self-auto">
                   {!user.isDemo && user.role === 'admin' && (
-                    <button
-                      type="button"
-                      onClick={() => setShowTDToolsModal(true)}
-                      className="inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
-                    >
-                      <Server className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      <span>TDtools API</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowTDToolsModal(true)}
+                        className="inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
+                      >
+                        <Server className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                        <span>TDtools API</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowNREModal(true)}
+                        className="inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
+                      >
+                        <Train className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                        <span>Rail Data API</span>
+                      </button>
+                    </>
                   )}
 
                   <button
@@ -1109,6 +1122,12 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
         isOpen={showTDToolsModal && !isDemo && user.role === 'admin'}
         onClose={() => setShowTDToolsModal(false)}
         isAdmin={user.role === 'admin' || user.role === 'moderator'}
+      />
+
+      <NREConfigModal
+        isOpen={showNREModal && !isDemo && user.role === 'admin'}
+        onClose={() => setShowNREModal(false)}
+        isAdmin={!isDemo && user.role === 'admin'}
       />
     </div>
   );

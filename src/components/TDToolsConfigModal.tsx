@@ -299,12 +299,19 @@ if ($action === 'diagrams' || $action === 'jobs' || $action === 'all' || (!isset
                 } elseif (is_array($hcVal)) {
                     $parsedHcs = $hcVal;
                 }
+                $collapsedHcs = [];
+                foreach ($parsedHcs as $h) {
+                    $hc = strtoupper(trim((string)$h));
+                    if ($hc !== '' && (empty($collapsedHcs) || $collapsedHcs[count($collapsedHcs) - 1] !== $hc)) {
+                        $collapsedHcs[] = $hc;
+                    }
+                }
 
-                if (!empty($ltp_id) && $ltp_id !== 'NULL') $headcodesMap["ltp_{$ltp_id}"] = array_values($parsedHcs);
-                if (!empty($stp_id) && $stp_id !== 'NULL') $headcodesMap["stp_{$stp_id}"] = array_values($parsedHcs);
+                if (!empty($ltp_id) && $ltp_id !== 'NULL') $headcodesMap["ltp_{$ltp_id}"] = $collapsedHcs;
+                if (!empty($stp_id) && $stp_id !== 'NULL') $headcodesMap["stp_{$stp_id}"] = $collapsedHcs;
                 if (!empty($job_id) && $job_id !== 'NULL') {
-                    $headcodesMap["ltp_{$job_id}"] = array_values($parsedHcs);
-                    $headcodesMap["stp_{$job_id}"] = array_values($parsedHcs);
+                    $headcodesMap["ltp_{$job_id}"] = $collapsedHcs;
+                    $headcodesMap["stp_{$job_id}"] = $collapsedHcs;
                 }
             }
             $resHc->free();

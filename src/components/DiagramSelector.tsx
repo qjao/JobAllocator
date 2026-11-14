@@ -332,7 +332,14 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       const job = availableDiagrams.find(j => j.name === selectedDiagram);
       if (job) {
         const key = job.isStp ? `stp_${job.jobid}` : `ltp_${job.jobid}`;
-        const hcs = headcodesMap[key] || [];
+        const rawHcs = headcodesMap[key] || [];
+        const hcs: string[] = [];
+        for (const raw of rawHcs) {
+          const hc = String(raw || '').trim().toUpperCase();
+          if (hc && hcs[hcs.length - 1] !== hc) {
+            hcs.push(hc);
+          }
+        }
         setAvailableHeadcodes(hcs);
         
         if (!initialized && initialAllocation) {
@@ -340,8 +347,11 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
             setSelectedHeadcodeIndices(hcs.map((_, i) => i));
             setIsFullDiagram(true);
           } else {
-            const indices = initialAllocation.headcodes
-              .map(hc => hcs.indexOf(hc))
+            const initialSet = new Set(
+              (initialAllocation.headcodes || []).map(hc => String(hc || '').trim().toUpperCase()).filter(Boolean)
+            );
+            const indices = hcs
+              .map((hc, i) => (initialSet.has(hc) ? i : -1))
               .filter(i => i !== -1);
             setSelectedHeadcodeIndices(indices);
             if (indices.length === hcs.length && hcs.length > 0) {

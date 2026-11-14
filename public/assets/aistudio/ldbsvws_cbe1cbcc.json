@@ -1,0 +1,323 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "version": "v1",
+    "title": "LDBSVWebService"
+  },
+  "host": "localhost",
+  "basePath": "/LDBSVWS",
+  "schemes": [
+    "http"
+  ],
+  "paths": {
+    "/api/20220120/GetArrivalBoardByTIPLOC/{tiploc}/{time}": {
+      "get": {
+        "tags": [
+          "_20220120"
+        ],
+        "description": "Returns arrivals for the supplied TIPLOC code within a defined time window.",
+        "operationId": "_20220120_GetArrivalBoardByTIPLOC",
+        "consumes": [
+          "application/json"
+        ],
+        "produces": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "tiploc",
+            "in": "path",
+            "description": "The TIPLOC code of the location for which the request is being made.",
+            "required": true,
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "time",
+            "in": "path",
+            "description": "Start time of the departure board.",
+            "required": true,
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "numRows",
+            "in": "query",
+            "description": "The number of services to return in the resulting station board, between 0 and 150 exclusive.",
+            "required": false,
+            "type": "integer",
+            "format": "int32",
+            "default": 10
+          },
+          {
+            "name": "timeWindow",
+            "in": "query",
+            "description": "How far into the future in minutes, relative to the time, to return services for, between 0 and 1440.",
+            "required": false,
+            "type": "integer",
+            "format": "int32",
+            "default": 120
+          },
+          {
+            "name": "filterCRS",
+            "in": "query",
+            "description": "The CRS code of either an origin or destination location to filter in. Optional.",
+            "required": false,
+            "type": "string",
+            "default": "null"
+          },
+          {
+            "name": "filterType",
+            "in": "query",
+            "description": "The type of filter to apply. Filters services to include only those originating or terminating at the filterTiploc location.",
+            "required": false,
+            "type": "string",
+            "default": "to",
+            "enum": [
+              "to",
+              "from"
+            ]
+          },
+          {
+            "name": "filterTOC",
+            "in": "query",
+            "description": "The TOC code to apply to the filter. Filters services to include only those belonging to the specified TOC. Optional.",
+            "required": false,
+            "type": "string",
+            "default": "null"
+          },
+          {
+            "name": "services",
+            "in": "query",
+            "description": "P for train Services, B for bus services, and S for ship services. Defaults to 'P'. Optional.",
+            "required": false,
+            "type": "string",
+            "default": "P"
+          },
+          {
+            "name": "getNonPassengerServices",
+            "in": "query",
+            "description": "Flag which indicates whether to get non-passenger services.",
+            "required": false,
+            "type": "boolean",
+            "default": "false"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "$ref": "#/definitions/Darwin.LDBSVWebService.LDBSV20211101.StationBoard"
+            }
+          }
+        }
+      }
+    },
+    "/api/20220120/GetDepartureBoardByTIPLOC/{tiploc}/{time}": {
+      "get": {
+        "tags": [
+          "_20220120"
+        ],
+        "description": "Returns departures for the supplied TIPLOC code within a defined time window.",
+        "operationId": "_20220120_GetDepartureBoardByTIPLOC",
+        "consumes": [
+          "application/json"
+        ],
+        "produces": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "tiploc",
+            "in": "path",
+            "description": "The TIPLOC code of the location for which the request is being made.",
+            "required": true,
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "time",
+            "in": "path",
+            "description": "Start time of the departure board.",
+            "required": true,
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "numRows",
+            "in": "query",
+            "description": "The number of services to return in the resulting station board, between 0 and 150 exclusive.",
+            "required": false,
+            "type": "integer",
+            "format": "int32",
+            "default": 10
+          },
+          {
+            "name": "timeWindow",
+            "in": "query",
+            "description": "How far into the future in minutes, relative to the time, to return services for, between 0 and 1440.",
+            "required": false,
+            "type": "integer",
+            "format": "int32",
+            "default": 120
+          },
+          {
+            "name": "filterCRS",
+            "in": "query",
+            "description": "The CRS code of either an origin or destination location to filter in. Optional.",
+            "required": false,
+            "type": "string",
+            "default": "null"
+          },
+          {
+            "name": "filterType",
+            "in": "query",
+            "description": "The type of filter to apply. Filters services to include only those originating or terminating at the filterTiploc location.",
+            "required": false,
+            "type": "string",
+            "default": "to",
+            "enum": [
+              "to",
+              "from"
+            ]
+          },
+          {
+            "name": "filterTOC",
+            "in": "query",
+            "description": "The TOC code to apply to the filter. Filters services to include only those belonging to the specified TOC. Optional.",
+            "required": false,
+            "type": "string",
+            "default": "null"
+          },
+          {
+            "name": "services",
+            "in": "query",
+            "description": "P for train Services, B for bus services, and S for ship services. Defaults to 'P'. Optional.",
+            "required": false,
+            "type": "string",
+            "default": "P"
+          },
+          {
+            "name": "getNonPassengerServices",
+            "in": "query",
+            "description": "Flag which indicates whether to get non-passenger services.",
+            "required": false,
+            "type": "boolean",
+            "default": "false"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "$ref": "#/definitions/Darwin.LDBSVWebService.LDBSV20211101.StationBoard"
+            }
+          }
+        }
+      }
+    },
+    "/api/20220120/GetDepBoardWithDetails/{crs}/{time}": {
+      "get": {
+        "tags": [
+          "_20220120"
+        ],
+        "description": "Returns all public departures for the supplied CRS code within a defined time window, including service details.",
+        "operationId": "_20220120_GetDepBoardWithDetails",
+        "consumes": [
+          "application/json"
+        ],
+        "produces": [
+          "application/json"
+        ],
+        "parameters": [
+          {
+            "name": "crs",
+            "in": "path",
+            "description": "The CRS code of the location for which the request is being made.  Usage: 3 characters, alphabetic, UPPERCASE",
+            "required": true,
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "time",
+            "in": "path",
+            "description": "Start time of the departure board.",
+            "required": true,
+            "type": "string",
+            "default": ""
+          },
+          {
+            "name": "numRows",
+            "in": "query",
+            "description": "The number of services to return in the resulting station board.  Usage: between 0 and 150 exclusive",
+            "required": false,
+            "type": "integer",
+            "format": "int32",
+            "default": 10
+          },
+          {
+            "name": "timeWindow",
+            "in": "query",
+            "description": "How far into the future in minutes, relative to the time, to return services for. Optional.  Usage: between 0 and 1440",
+            "required": false,
+            "type": "integer",
+            "format": "int32",
+            "default": 120
+          },
+          {
+            "name": "filterCRS",
+            "in": "query",
+            "description": "The CRS code of either an origin or destination location to filter in. Optional.  Usage: 3 characters, alphabetic, UPPERCASE",
+            "required": false,
+            "type": "string",
+            "default": "null"
+          },
+          {
+            "name": "filterType",
+            "in": "query",
+            "description": "The type of filter to apply. Filters services to include only those originating or terminating at the filterTiploc location.",
+            "required": false,
+            "type": "string",
+            "default": "to",
+            "enum": [
+              "to",
+              "from"
+            ]
+          },
+          {
+            "name": "filterTOC",
+            "in": "query",
+            "description": "The TOC code to apply to the filter. Filters services to include only those belonging to the specified TOC. Optional",
+            "required": false,
+            "type": "string",
+            "default": "null"
+          },
+          {
+            "name": "services",
+            "in": "query",
+            "description": "P for train Services, B for bus services, S for ship services. Defaults to 'P'. Optional",
+            "required": false,
+            "type": "string",
+            "default": "P"
+          },
+          {
+            "name": "getNonPassengerServices",
+            "in": "query",
+            "description": "Flag which indicates whether to get non-passenger services.Defaults to 'false'. Optional",
+            "required": false,
+            "type": "boolean",
+            "default": "false"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "$ref": "#/definitions/Darwin.LDBSVWebService.LDBSV20211101.StationBoardWithDetails"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -20,7 +20,9 @@ interface TrainService {
   operator: string;
   operatorCode?: string;
   destination: string;
+  destinationTiploc?: string;
   headcode: string;
+  isPassengerService?: boolean;
 }
 
 const ELIZABETH_LINE_LOCATIONS = [
@@ -104,12 +106,20 @@ const ELIZABETH_LINE_DESTINATIONS = [
   { crs: 'RDG', tiploc: 'RDNGSTN', name: 'Reading' },
 ].sort((a, b) => a.name.localeCompare(b.name));
 
+const PRESET_ROUTES = [
+  { label: 'Pad - T4', origin: 'PAD', destination: 'HAF' },
+  { label: 'Pad - T5', origin: 'PAD', destination: 'HWV' },
+  { label: 'Pad - Maidenhead', origin: 'PAD', destination: 'MAI' },
+  { label: 'Pad - Reading', origin: 'PAD', destination: 'RDG' },
+  { label: 'Pad - Shenfield', origin: 'PAD', destination: 'SNF' },
+] as const;
+
 import Header from './Header';
 import { getLondonDate } from '../lib/utils';
 
 export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: FindJobsProps) {
   const isDemoUser = Boolean(user.isDemo || user.email?.toLowerCase().startsWith('demo-'));
-  const [crs, setCrs] = useState('PADTLL');
+  const [crs, setCrs] = useState('PAD');
   const [date, setDate] = useState('');
   const [hour, setHour] = useState('');
   const [minute, setMinute] = useState('');
@@ -117,6 +127,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [services, setServices] = useState<TrainService[]>([]);
+  const [boardMode, setBoardMode] = useState<'departure' | 'arrival'>('departure');
   const [hasSearched, setHasSearched] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [debugInfo, setDebugInfo] = useState<{
@@ -261,17 +272,16 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
     }
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const performSearch = async (originCode: string, destCode: string) => {
     if (isDemoUser) {
       return;
     }
-    const cleanCrs = crs.trim().toUpperCase();
+    const cleanCrs = originCode.trim().toUpperCase();
     if (!cleanCrs) {
       setError('CRS code is required.');
       return;
     }
-    const cleanFilterCrs = filterCrs.trim().toUpperCase();
+    const cleanFilterCrs = destCode.trim().toUpperCase();
 
     if (cleanCrs.length > 3 && cleanFilterCrs.length > 3) {
       setError('At least one standard station must be selected (cannot search from a Depot/Sidings to another Depot/Sidings).');
@@ -305,12 +315,28 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
         throw new Error(data.error || 'Failed to fetch departures.');
       }
 
+      setBoardMode(data.boardMode === 'arrival' ? 'arrival' : 'departure');
       setServices(data.services || []);
+      if (user.role === 'admin' || user.role === 'moderator') {
+        fetchApiStats();
+      }
     } catch (err: any) {
       setError(err.message || 'An error occurred while fetching departures.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await performSearch(crs, filterCrs);
+  };
+
+  const handleQuickRoute = async (originCode: string, destCode: string) => {
+    if (isDemoUser || loading) return;
+    setCrs(originCode);
+    setFilterCrs(destCode);
+    await performSearch(originCode, destCode);
   };
 
   const chartData = useMemo(() => {
@@ -483,15 +509,41 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
             </button>
           </form>
 
+          <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/80 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400 mr-1">
+              Quick Routes:
+            </span>
+            {PRESET_ROUTES.map((route) => {
+              const isActive = crs === route.origin && filterCrs === route.destination;
+              return (
+                <button
+                  key={`${route.origin}-${route.destination}`}
+                  type="button"
+                  disabled={isDemoUser || loading}
+                  onClick={() => handleQuickRoute(route.origin, route.destination)}
+                  title={isDemoUser ? 'Quick routes are disabled in Demo Mode (View Only)' : `Search ${route.label}`}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isActive
+                      ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-400 dark:border-blue-600 text-blue-700 dark:text-blue-300'
+                      : 'bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400'
+                  }`}
+                >
+                  <Train className="w-3.5 h-3.5 shrink-0 opacity-75" />
+                  <span>{route.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
           {error && (
             <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-3 text-red-700 dark:text-red-400 text-sm transition-colors">
               <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold">Error fetching departures</p>
                 <p className="whitespace-pre-wrap font-mono text-xs mt-2 overflow-x-auto">{error}</p>
-                {error.includes('NRE_STAFF_TOKEN') && (
+                {(error.includes('NRE_STAFF_TOKEN') || error.includes('Rail Data API Key')) && (
                   <p className="mt-2 text-xs opacity-80">
-                    The server needs an NRE_STAFF_TOKEN environment variable configured to access the National Rail Enquiries OpenLDBWS API.
+                    An Administrator can configure the Rail Data API key under <strong>Admin &rarr; Rail Data API</strong> (or set <code className="font-mono">NRE_STAFF_TOKEN</code> in server environment variables).
                   </p>
                 )}
               </div>
@@ -509,10 +561,15 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {boardMode === 'arrival' && (
+                  <div className="px-4 py-2.5 bg-blue-50/70 dark:bg-blue-950/30 border-b border-blue-200/80 dark:border-blue-800/50 text-xs text-blue-700 dark:text-blue-300">
+                    Reverse Arrival Lookup: showing services originating from the selected depot/siding with scheduled &amp; estimated arrival times at Destination.
+                  </div>
+                )}
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
                     <tr>
-                      <th className="px-4 py-3 font-medium">Departs</th>
+                      <th className="px-4 py-3 font-medium">{boardMode === 'arrival' ? 'Arrives' : 'Departs'}</th>
                       <th className="px-4 py-3 font-medium">Destination</th>
                       <th className="px-4 py-3 font-medium">Platform</th>
                       <th className="px-4 py-3 font-medium">Headcode</th>
@@ -523,19 +580,36 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                     {services.map((service, index) => (
                       <tr key={index} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors group">
                         <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{service.std}</td>
-                        <td className="px-4 py-3 text-slate-700 dark:text-slate-300 truncate max-w-[200px]" title={service.destination}>
+                        <td
+                          className="px-4 py-3 text-slate-700 dark:text-slate-300 truncate max-w-[220px]"
+                          title={
+                            service.destinationTiploc && service.destinationTiploc !== service.destination
+                              ? `${service.destination} (${service.destinationTiploc})`
+                              : service.destination
+                          }
+                        >
                           {service.destination}
                         </td>
                         <td className="px-4 py-3 text-slate-700 dark:text-slate-300 text-center">{service.platform}</td>
                         <td className="px-4 py-3">
-                          <a 
-                            href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${service.date}&headcode=${service.headcode}`}
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:text-blue-600 hover:border-blue-400 font-mono text-xs font-semibold px-2 py-1 rounded transition-colors"
-                          >
-                            {service.headcode}
-                          </a>
+                          <div className="inline-flex items-center gap-1.5">
+                            <a 
+                              href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${service.date}&headcode=${service.headcode}`}
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:text-blue-600 hover:border-blue-400 font-mono text-xs font-semibold px-2 py-1 rounded transition-colors"
+                            >
+                              {service.headcode}
+                            </a>
+                            {service.isPassengerService === false && (
+                              <span
+                                className="px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50"
+                                title="Non-passenger / Empty Coaching Stock movement"
+                              >
+                                ECS
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span className={`font-medium ${
