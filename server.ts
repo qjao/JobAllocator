@@ -1749,7 +1749,10 @@ async function startServer() {
     const stmt = getDb(req).prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
     const { count } = stmt.get(oneHourAgo) as { count: number };
     if (count >= MAX_REQUESTS_PER_HOUR) {
-      throw new Error('Global API rate limit exceeded (4500 requests per hour). Please try again later.');
+      const rateLimitErr: any = new Error('Global API rate limit exceeded (4500 requests per hour).');
+      rateLimitErr.userMessage = 'Unable to load live train services right now. Please contact an admin.';
+      rateLimitErr.adminDetail = 'Global API rate limit exceeded (4500 requests per hour). Please try again later.';
+      throw rateLimitErr;
     }
   }
 
@@ -1904,11 +1907,19 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
       });
     }
 
+    const isAdminOrMod = (req as any).user?.role === 'admin' || (req as any).user?.role === 'moderator';
     const { url: nreBaseUrl, apiKey, arrivalUrl: nreArrivalUrl, arrivalApiKey } = getNreConfig();
     if (!apiKey && !(isOriginTiplocOnly && cleanFilterCrs && arrivalApiKey)) {
-      return res.status(500).json({
-        error: 'Rail Data API Key (NRE_STAFF_TOKEN) is not configured on the server. Please configure it in User Management > Rail Data API.'
-      });
+      console.error('Rail Data API Key (NRE_STAFF_TOKEN) is not configured on the server.');
+      const payload: any = {
+        error: 'Unable to load live train services right now. Please contact an admin.'
+      };
+      if (isAdminOrMod) {
+        payload.debug = {
+          error: 'Rail Data API Key (NRE_STAFF_TOKEN) is not configured on the server. Configure it in Admin > Rail Data API.'
+        };
+      }
+      return res.status(500).json(payload);
     }
 
     const fetchBoard = async (timeVal: string) => {
@@ -1924,9 +1935,11 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
       if (isOriginTiplocOnly && cleanFilterCrs && (arrivalApiKey || targetCrsKey !== 'ILFEMUD')) {
         if (!arrivalApiKey) {
           const missingArrivalErr: any = new Error(
-            `Rail Data Live Arrival Board API key is not configured for reverse lookup from depot/siding origin "${targetCrsKey}". Please configure it in User Management > Rail Data API, or select a station as Origin with "${targetCrsKey}" as Destination.`
+            `Rail Data Live Arrival Board API key is not configured for reverse lookup from depot/siding origin "${targetCrsKey}".`
           );
           missingArrivalErr.statusCode = 400;
+          missingArrivalErr.userMessage = 'Unable to load live train services right now. Please contact an admin.';
+          missingArrivalErr.adminDetail = `Rail Data Live Arrival Board API key is not configured for reverse lookup from depot/siding origin "${targetCrsKey}". Configure it in Admin > Rail Data API.`;
           throw missingArrivalErr;
         }
         boardType = 'GetArrivalBoardByTIPLOC';
@@ -1986,14 +1999,19 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
       if (!response.ok || !jsonObj) {
         const faultDetails = jsonObj?.fault?.faultstring || jsonObj?.Message || jsonObj?.message || responseText;
         console.error('Rail Data API Error response:', faultDetails);
-        if (isOriginTiplocOnly && response.status >= 500) {
-          const unsupportedOriginErr: any = new Error(
-            `Rail Data API does not provide a board for depot/siding origin "${targetCrsKey}" on this route. You can select a station as Origin with "${targetCrsKey}" as Destination instead.`
-          );
-          unsupportedOriginErr.statusCode = 400;
-          throw unsupportedOriginErr;
-        }
-        throw new Error(`Rail Data API responded with status ${response.status}. Details: ${faultDetails}\n\nRequest:\n${debugRequestStr}`);
+        const apiErr: any = new Error(
+          isOriginTiplocOnly && response.status >= 500
+            ? `Rail Data API does not provide a board for depot/siding origin "${targetCrsKey}" on this route.`
+            : `Rail Data API responded with status ${response.status}. Details: ${faultDetails}`
+        );
+        apiErr.statusCode = isOriginTiplocOnly && response.status >= 500 ? 400 : 502;
+        apiErr.userMessage = 'Unable to load live train services right now. Please contact an admin.';
+        apiErr.debug = {
+          request: debugRequestStr,
+          response: responseText || String(faultDetails || ''),
+          error: apiErr.message
+        };
+        throw apiErr;
       }
 
       const debugResponseStr = JSON.stringify(jsonObj, null, 2);
@@ -2191,10 +2209,13 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
         return aTime.localeCompare(bTime);
       });
 
-      const responseData = { 
+      const responseData: any = { 
         boardMode: isArrivalBoard ? 'arrival' : 'departure',
-        services: parsedServices, 
-        debug: { 
+        services: parsedServices
+      };
+
+      if (isAdminOrMod) {
+        responseData.debug = { 
           request: lastRequest, 
           response: lastResponse,
           cacheStats: {
@@ -2207,15 +2228,22 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
             } : null,
             rateLimit: getRateLimitStats(req)
           }
-        } 
-      };
+        };
+      }
 
       res.json(responseData);
     } catch (error: any) {
       console.error('Error fetching Rail Data departures:', error);
       const status = error?.statusCode === 400 ? 400 : 500;
-      const msg = error?.statusCode === 400 ? error.message : 'Failed to fetch departures from Rail Data API: ' + error.message;
-      res.status(status).json({ error: msg });
+      const payload: any = {
+        error: error?.userMessage || 'Unable to load live train services right now. Please contact an admin.'
+      };
+      if (isAdminOrMod) {
+        payload.debug = error?.debug
+          ? { ...error.debug, cacheStats: { cachedServicesFound: 0, apiRequestsMade: 0, rateLimit: getRateLimitStats(req) } }
+          : { error: error?.adminDetail || error?.message || 'Unknown error', cacheStats: { cachedServicesFound: 0, apiRequestsMade: 0, rateLimit: getRateLimitStats(req) } };
+      }
+      res.status(status).json(payload);
     }
   });
 

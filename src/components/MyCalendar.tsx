@@ -320,13 +320,13 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to add allocation');
+        throw new Error('Unable to add allocation.');
       }
 
       setClaimModalDate(null);
     } catch (err: any) {
-      setClaimFormError(err.message || 'An unexpected error occurred');
+      console.error('Error adding allocation:', err);
+      setClaimFormError('Unable to claim job. Please contact an admin.');
       throw err;
     } finally {
       setClaimSubmitting(false);
@@ -390,7 +390,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
       setClaimModalDate(null);
     } catch (error) {
       console.error("Error creating allocation:", error);
-      setClaimFormError('Failed to claim job. Please try again.');
+      setClaimFormError('Unable to claim job. Please contact an admin.');
     } finally {
       setClaimSubmitting(false);
     }
@@ -756,7 +756,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                   
                 } catch (error) {
                   console.error("Error updating allocation:", error);
-                  setEditFormError('Failed to update allocation. Check permissions.');
+                  setEditFormError('Unable to update allocation. Please contact an admin.');
                 } finally {
                   setEditSubmitting(false);
                 }

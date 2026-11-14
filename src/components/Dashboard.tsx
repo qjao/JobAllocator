@@ -279,7 +279,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
       if (!res.ok) throw new Error('Failed to add allocation');
     } catch (error) {
       console.error("Error adding allocation:", error);
-      setFormError('Failed to add allocation. Check permissions.');
+      setFormError('Unable to add allocation. Please contact an admin.');
     } finally {
       setSubmitting(false);
     }
@@ -352,7 +352,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
       setEditingAllocation(null);
     } catch (error) {
       console.error("Error updating allocation:", error);
-      setEditFormError('Failed to update allocation. Check permissions.');
+      setEditFormError('Unable to update allocation. Please contact an admin.');
     } finally {
       setEditSubmitting(false);
     }
@@ -370,7 +370,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
       setDeleteConfirmId(null);
     } catch (error) {
       console.error("Error deleting allocation:", error);
-      setFormError("Failed to delete allocation.");
+      setFormError("Unable to delete allocation. Please contact an admin.");
       setDeleteConfirmId(null);
     }
   };

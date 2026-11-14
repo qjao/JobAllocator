@@ -112,6 +112,8 @@ const PRESET_ROUTES = [
   { label: 'Pad - Maidenhead', origin: 'PAD', destination: 'MAI' },
   { label: 'Pad - Reading', origin: 'PAD', destination: 'RDG' },
   { label: 'Pad - Shenfield', origin: 'PAD', destination: 'SNF' },
+  { label: 'Pad - OOC', origin: 'PAD', destination: 'OLDOXRS' },
+  { label: 'OOC - Pad', origin: 'OLDOXRS', destination: 'PAD' },
 ] as const;
 
 import Header from './Header';
@@ -131,6 +133,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
   const [hasSearched, setHasSearched] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [debugInfo, setDebugInfo] = useState<{
+    error?: string,
     request?: string, 
     response?: string,
     cacheStats?: {
@@ -266,7 +269,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
       }
     } catch (err) {
       console.error(err);
-      setError('Failed to clear cache.');
+      setError('Unable to clear cache right now. Please contact an admin.');
     } finally {
       setClearingCache(false);
     }
@@ -305,14 +308,23 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
       const res = await fetch(`/api/nre/departures?${params.toString()}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
       
-      if (data.debug) {
+      if (data?.debug && (user.role === 'admin' || user.role === 'moderator')) {
         setDebugInfo(data.debug);
       }
 
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to fetch departures.');
+      if (!res.ok || !data) {
+        if (user.role === 'admin' || user.role === 'moderator') {
+          fetchApiStats();
+        }
+        setError('Unable to load live train services right now. Please contact an admin.');
+        return;
       }
 
       setBoardMode(data.boardMode === 'arrival' ? 'arrival' : 'departure');
@@ -321,7 +333,8 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
         fetchApiStats();
       }
     } catch (err: any) {
-      setError(err.message || 'An error occurred while fetching departures.');
+      console.error('Error fetching departures:', err);
+      setError('Unable to load live train services right now. Please contact an admin.');
     } finally {
       setLoading(false);
     }
@@ -510,9 +523,6 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
           </form>
 
           <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700/80 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400 mr-1">
-              Quick Routes:
-            </span>
             {PRESET_ROUTES.map((route) => {
               const isActive = crs === route.origin && filterCrs === route.destination;
               return (
@@ -539,13 +549,8 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
             <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-3 text-red-700 dark:text-red-400 text-sm transition-colors">
               <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold">Error fetching departures</p>
-                <p className="whitespace-pre-wrap font-mono text-xs mt-2 overflow-x-auto">{error}</p>
-                {(error.includes('NRE_STAFF_TOKEN') || error.includes('Rail Data API Key')) && (
-                  <p className="mt-2 text-xs opacity-80">
-                    An Administrator can configure the Rail Data API key under <strong>Admin &rarr; Rail Data API</strong> (or set <code className="font-mono">NRE_STAFF_TOKEN</code> in server environment variables).
-                  </p>
-                )}
+                <p className="font-semibold">Unable to load departures</p>
+                <p className="mt-1">{error}</p>
               </div>
             </div>
           )}
@@ -561,11 +566,6 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
               </div>
             ) : (
               <div className="overflow-x-auto">
-                {boardMode === 'arrival' && (
-                  <div className="px-4 py-2.5 bg-blue-50/70 dark:bg-blue-950/30 border-b border-blue-200/80 dark:border-blue-800/50 text-xs text-blue-700 dark:text-blue-300">
-                    Reverse Arrival Lookup: showing services originating from the selected depot/siding with scheduled &amp; estimated arrival times at Destination.
-                  </div>
-                )}
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
                     <tr>
@@ -767,6 +767,15 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                     {clearingCache ? 'Clearing...' : 'Clear Global Cache'}
                   </button>
                 </div>
+
+                {debugInfo?.error && (
+                  <div>
+                    <h3 className="text-sm font-medium text-red-600 dark:text-red-400 mb-2">API Error Details</h3>
+                    <pre className="bg-red-50 dark:bg-red-950/30 p-4 rounded-lg overflow-auto max-h-[200px] text-xs text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap border border-red-200 dark:border-red-900/50">
+                      {debugInfo.error}
+                    </pre>
+                  </div>
+                )}
 
                 {debugInfo?.request && (
                   <div className="relative group">

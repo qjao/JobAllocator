@@ -198,7 +198,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       setDepots(Array.from(depotSet).sort());
     } catch (err) {
       console.error("Failed to load Diagram API data", err);
-      setApiError('Unable to load jobs data.');
+      setApiError('Unable to load jobs data. Please contact an admin.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -502,9 +502,17 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
           <div className="flex items-start gap-3">
             <Server className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
             <div className="text-xs space-y-1">
-              <div className="font-bold">No Diagrams Loaded from TDtools</div>
+              <div className="font-bold">
+                {canAccessTDTools ? 'No Diagrams Loaded from TDtools' : 'Diagrams Unavailable'}
+              </div>
               <p className="text-amber-700 dark:text-amber-300">
-                The dashboard dropdowns populate live from your TDtools API (<code className="font-mono">r_jobs</code>, <code className="font-mono">r_jobs_stp</code>, and <code className="font-mono">r_jobs_headcodes</code>). Connect and synchronize your endpoint to load all depots and diagrams.
+                {canAccessTDTools ? (
+                  <>
+                    The dashboard dropdowns populate live from your TDtools API (<code className="font-mono">r_jobs</code>, <code className="font-mono">r_jobs_stp</code>, and <code className="font-mono">r_jobs_headcodes</code>). Connect and synchronize your endpoint to load all depots and diagrams.
+                  </>
+                ) : (
+                  'No diagrams are currently available. Please contact an admin.'
+                )}
               </p>
             </div>
           </div>
