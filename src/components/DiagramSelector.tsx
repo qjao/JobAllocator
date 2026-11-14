@@ -65,6 +65,16 @@ const DEPOT_NAMES: Record<string, string> = {
   'SH': 'Shenfield'
 };
 
+let clientDiagramsCache: { dateKey: string; data: any } | null = null;
+const clientDriverInfoCache = new Map<string, { dateKey: string; data: any }>();
+const getLondonTodayKey = () =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+
 export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, canAccessTDTools = false, canRefreshDiagrams = false, currentUserName = '', initialAllocation, children }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
@@ -84,6 +94,8 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   const [refreshing, setRefreshing] = useState(false);
+  const [driverRefreshNonce, setDriverRefreshNonce] = useState(0);
+  const forceDriverRefreshRef = useRef(false);
   const [sourceInfo, setSourceInfo] = useState<{ source?: string; totalJobs?: number; counts?: any; dbErrors?: any } | null>(null);
 
   // Derived data
@@ -94,6 +106,8 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   // Driver & Depot Info state
   const [driverInfo, setDriverInfo] = useState<DriverInfo | null>(null);
   const [loadingDriverInfo, setLoadingDriverInfo] = useState(false);
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
   const [showTDToolsModal, setShowTDToolsModal] = useState(false);
 
   // Clear selections on date change
@@ -117,22 +131,41 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   useEffect(() => {
     if (!selectedDiagram) {
       setDriverInfo(null);
+      setLoadingDriverInfo(false);
+      setImageLoaded(false);
+      setImageFailed(false);
       return;
     }
 
+    const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+    const todayKey = getLondonTodayKey();
+    const cacheKey = `${isDemo ? 'demo' : 'real'}::${dateStr}::${selectedDiagram}`;
+    const cached = clientDriverInfoCache.get(cacheKey);
+    if (cached && cached.dateKey === todayKey) {
+      setDriverInfo(cached.data?.found ? cached.data : null);
+      setLoadingDriverInfo(false);
+      return;
+    }
+
+    setDriverInfo(null);
+    setImageLoaded(false);
+    setImageFailed(false);
+    setLoadingDriverInfo(true);
     let isMounted = true;
+    const shouldForceRefresh = forceDriverRefreshRef.current;
+    forceDriverRefreshRef.current = false;
     const fetchDriverInfo = async () => {
-      setLoadingDriverInfo(true);
       try {
         const token = localStorage.getItem('token');
-        const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
-        const res = await fetch(`/api/diagrams/driver-info?date=${encodeURIComponent(dateStr)}&job=${encodeURIComponent(selectedDiagram)}`, {
+        const refreshParam = shouldForceRefresh ? '&refresh=1' : '';
+        const res = await fetch(`/api/diagrams/driver-info?date=${encodeURIComponent(dateStr)}&job=${encodeURIComponent(selectedDiagram)}${refreshParam}`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
         });
         if (res.ok) {
           const data = await res.json();
+          clientDriverInfoCache.set(cacheKey, { dateKey: todayKey, data });
           if (isMounted) {
             setDriverInfo(data.found ? data : null);
           }
@@ -151,25 +184,10 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
     return () => {
       isMounted = false;
     };
-  }, [selectedDiagram, selectedDate]);
+  }, [selectedDiagram, selectedDate, isDemo, driverRefreshNonce]);
 
   const loadData = React.useCallback(async (isManualRefresh = false) => {
-    if (isManualRefresh) setRefreshing(true);
-    else setLoading(true);
-    setApiError('');
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/diagrams?_t=${Date.now()}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        }
-      });
-      
-      if (!res.ok) throw new Error('Failed to load diagram data');
-      
-      const data = await res.json();
+    const applyCatalogData = (data: any) => {
       const unifiedJobs: JobData[] = Array.isArray(data.jobs) ? data.jobs : [];
       const hm: Record<string, string[]> = data.headcodesMap || {};
 
@@ -196,6 +214,39 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
         }
       });
       setDepots(Array.from(depotSet).sort());
+    };
+
+    const todayKey = getLondonTodayKey();
+    if (!isManualRefresh && clientDiagramsCache && clientDiagramsCache.dateKey === todayKey) {
+      setApiError('');
+      applyCatalogData(clientDiagramsCache.data);
+      setLoading(false);
+      return;
+    }
+
+    if (isManualRefresh) setRefreshing(true);
+    else setLoading(true);
+    setApiError('');
+    try {
+      const token = localStorage.getItem('token');
+      const endpoint = isManualRefresh ? `/api/diagrams?refresh=1&_t=${Date.now()}` : '/api/diagrams';
+      const res = await fetch(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          ...(isManualRefresh ? { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } : {})
+        }
+      });
+      
+      if (!res.ok) throw new Error('Failed to load diagram data');
+      
+      const data = await res.json();
+      clientDiagramsCache = { dateKey: todayKey, data };
+      if (isManualRefresh) {
+        clientDriverInfoCache.clear();
+        forceDriverRefreshRef.current = true;
+        setDriverRefreshNonce(n => n + 1);
+      }
+      applyCatalogData(data);
     } catch (err) {
       console.error("Failed to load Diagram API data", err);
       setApiError('Unable to load jobs data. Please contact an admin.');
@@ -448,9 +499,11 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
 
   // Prefer the deduplicated version (which correctly prioritizes STP over LTP)
   const currentJob = availableDiagrams.find(j => j.name === selectedDiagram);
-  const activePdfName = driverInfo?.pdfname || currentJob?.pdfname;
-  const activePage = driverInfo?.page || currentJob?.page;
-  const activeImageUrl = driverInfo?.imageUrl || (activePdfName && activePage ? `https://tdtools.co.uk/roster/diagramimg.php?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}` : null);
+  const activePdfName = loadingDriverInfo ? null : (driverInfo?.pdfname || currentJob?.pdfname);
+  const activePage = loadingDriverInfo ? null : (driverInfo?.page || currentJob?.page);
+  const activeImageUrl = loadingDriverInfo
+    ? null
+    : (driverInfo?.imageUrl || (activePdfName && activePage ? `https://tdtools.co.uk/roster/diagramimg.php?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}` : null));
   const isStp = driverInfo?.isStp ?? currentJob?.isStp ?? false;
   const isCancelled = driverInfo?.cancelled ?? currentJob?.cancel ?? false;
 
@@ -582,6 +635,9 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                   if (newDiagram !== selectedDiagram) {
                     setNotesInput('');
                     setShowNotes(false);
+                    setDriverInfo(null);
+                    setImageLoaded(false);
+                    setImageFailed(false);
                   }
                   setSelectedDiagram(newDiagram);
                   
@@ -698,42 +754,55 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
         )}
 
         {/* Diagram Image / PDF View (retrieved dynamically from API or local roster) */}
-        {(activeImageUrl || (activePdfName && activePage)) && (
+        {selectedDiagram && !imageFailed && (loadingDriverInfo || activeImageUrl || (activePdfName && activePage)) && (
           <div className="w-full flex justify-center">
-            {isCancelled ? (
+            {isCancelled && !loadingDriverInfo ? (
               <div className="mt-6 mb-2 w-full lg:w-[300px] p-8 border border-red-200 dark:border-red-800/50 rounded-lg bg-red-50 dark:bg-red-950/20 text-center text-red-600 dark:text-red-400 font-bold uppercase tracking-wider text-sm shadow-xs">
                 Diagram Cancelled
               </div>
             ) : (
               <div 
                 id="diagram-preview-box"
-                className="mt-6 mb-2 w-full lg:w-[300px] h-auto lg:h-[425px] border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-white block relative group cursor-zoom-in shadow-sm"
-                onClick={() => setIsPreviewOpen(true)}
+                className={`mt-6 mb-2 w-full lg:w-[300px] min-h-[260px] lg:h-[425px] border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden bg-white block relative group shadow-sm ${imageLoaded ? 'cursor-zoom-in' : 'cursor-default'}`}
+                onClick={() => { if (imageLoaded && activeImageUrl) setIsPreviewOpen(true); }}
               >
-                <img 
-                  src={activeImageUrl || `https://tdtools.co.uk/roster/diagramimg.php?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}`} 
-                  alt={`Diagram Preview for ${selectedDiagram}`} 
-                  className={
-                    isStp 
-                      ? "w-[145%] max-w-[145%] -ml-[8%] -mb-[40%] lg:mb-0 h-auto shrink-0" 
-                      : "w-[133%] max-w-[133%] -ml-[2%] -mb-[54%] lg:mb-0 h-auto shrink-0"
-                  }
-                  referrerPolicy="no-referrer"
-                  onError={(e) => {
-                    // Try backend proxy if direct loading fails
-                    const target = e.target as HTMLImageElement;
-                    if (!target.src.includes('/api/diagrams/image-proxy') && activePdfName && activePage) {
-                      target.src = `/api/diagrams/image-proxy?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}`;
-                    } else {
-                      target.style.display = 'none';
-                    }
-                  }}
-                />
-                <div
-                  className="absolute top-2 right-2 p-2 bg-slate-900/60 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm shadow-sm pointer-events-none"
-                >
-                  <Maximize2 className="w-5 h-5" />
-                </div>
+                {(loadingDriverInfo || !imageLoaded) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 text-xs z-10">
+                    <Loader2 className="w-6 h-6 animate-spin text-blue-600 dark:text-blue-400" />
+                    <span>Loading diagram preview...</span>
+                  </div>
+                )}
+                {!loadingDriverInfo && activeImageUrl && (
+                  <img 
+                    key={`${selectedDiagram}::${activeImageUrl}`}
+                    src={activeImageUrl} 
+                    alt={`Diagram Preview for ${selectedDiagram}`} 
+                    className={`${
+                      isStp 
+                        ? "w-[145%] max-w-[145%] -ml-[8%] -mb-[40%] lg:mb-0 h-auto shrink-0" 
+                        : "w-[133%] max-w-[133%] -ml-[2%] -mb-[54%] lg:mb-0 h-auto shrink-0"
+                    } transition-opacity duration-150 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
+                    referrerPolicy="no-referrer"
+                    onLoad={() => setImageLoaded(true)}
+                    onError={(e) => {
+                      // Try backend proxy if direct loading fails
+                      const target = e.target as HTMLImageElement;
+                      if (!target.src.includes('/api/diagrams/image-proxy') && activePdfName && activePage) {
+                        target.src = `/api/diagrams/image-proxy?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}`;
+                      } else {
+                        setImageFailed(true);
+                        setImageLoaded(true);
+                      }
+                    }}
+                  />
+                )}
+                {imageLoaded && (
+                  <div
+                    className="absolute top-2 right-2 p-2 bg-slate-900/60 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm shadow-sm pointer-events-none"
+                  >
+                    <Maximize2 className="w-5 h-5" />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -876,6 +945,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
               onClick={(e) => e.stopPropagation()}
             >
               <img 
+                key={`modal::${selectedDiagram}::${activeImageUrl}`}
                 src={activeImageUrl || `https://tdtools.co.uk/roster/diagramimg.php?pdfname=${encodeURIComponent(String(activePdfName))}&page=${encodeURIComponent(String(activePage))}`} 
                 alt={`Full Preview for ${selectedDiagram}`} 
                 className="w-auto h-auto max-w-[95vw] max-h-[90vh] object-contain cursor-zoom-out" 

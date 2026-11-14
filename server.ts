@@ -86,6 +86,19 @@ function initDb(database) {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+    CREATE TABLE IF NOT EXISTS diagram_catalog_cache (
+      id TEXT PRIMARY KEY,
+      cache_date TEXT,
+      api_url TEXT,
+      payload TEXT,
+      updated_at INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS driver_info_cache (
+      cache_key TEXT PRIMARY KEY,
+      cache_date TEXT,
+      payload TEXT,
+      updated_at INTEGER
+    );
   `);
   try {
     database.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'instructor'");
@@ -953,13 +966,31 @@ async function startServer() {
     return { url, token };
   }
 
-  // Reuse recent TDtools driver lookups across dashboard cards and form selections.
-  const driverInfoCache = new Map<string, { expiresAt: number; data: any }>();
+  // Daily cache for TDtools driver lookups (updated on TDtools once per London day)
+  const driverInfoCache = new Map<string, { cacheDate: string; data: any }>();
   const driverInfoRequestsInFlight = new Map<string, Promise<any | null>>();
-  const DRIVER_INFO_CACHE_TTL_MS = 60 * 1000;
   const MAX_DRIVER_INFO_CACHE_ENTRIES = 1000;
 
-  // Diagrams API: serve diagrams from live TDtools API or fallback data directory
+  // Daily cache for TDtools diagram catalog (fetched at most once per London day unless admin forces refresh)
+  let diagramCatalogCache: { cacheDate: string; apiUrl: string; payload: any; updatedAt: number } | null = null;
+  let diagramCatalogFetchInFlight: Promise<any> | null = null;
+
+  const clearDriverInfoCache = () => {
+    driverInfoCache.clear();
+    try {
+      db.prepare("DELETE FROM driver_info_cache").run();
+    } catch (e) {}
+  };
+
+  const clearDiagramCatalogCache = () => {
+    diagramCatalogCache = null;
+    try {
+      db.prepare("DELETE FROM diagram_catalog_cache WHERE id = 'default'").run();
+    } catch (e) {}
+    clearDriverInfoCache();
+  };
+
+  // Diagrams API: serve diagrams from daily cache, TDtools API (once per day), or fallback data directory
   app.get("/api/diagrams", async (req, res) => {
     // Prevent any browser or proxy caching
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
@@ -967,75 +998,198 @@ async function startServer() {
     res.setHeader('Expires', '0');
 
     try {
-      // 1. Check if external TDtools API is configured to load r_jobs, r_jobs_stp, and r_jobs_headcodes live
       const { url: externalApiUrl, token: apiToken } = getTDToolsConfig(req);
-      if (externalApiUrl) {
-        try {
-          const targetUrl = new URL(externalApiUrl);
-          targetUrl.searchParams.set('action', 'diagrams');
-          targetUrl.searchParams.set('_nocache', Date.now().toString());
+      const normalizedApiUrl = externalApiUrl || '';
+      const todayLondon = getLondonTimeIso().substring(0, 10);
 
-          const extRes = await fetch(targetUrl.toString(), {
-            cache: 'no-store',
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache',
-              ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {})
+      // Only allow admins/moderators to force-bypass the daily cache via ?refresh=1
+      let canForceRefresh = false;
+      if (req.query.refresh === '1') {
+        const authHeader = req.headers['authorization'];
+        const bearerToken = authHeader && authHeader.split(' ')[1];
+        if (bearerToken) {
+          try {
+            const decoded: any = jwt.verify(bearerToken, JWT_SECRET);
+            if (decoded && !decoded.isDemo && (decoded.role === 'admin' || decoded.role === 'moderator')) {
+              canForceRefresh = true;
             }
-          });
-          if (extRes.ok) {
-            const extData = await extRes.json();
-            if (extData && Array.isArray(extData.jobs)) {
-              const oneYearAgo = new Date();
-              oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-              const oneYearAgoIso = oneYearAgo.toISOString().substring(0, 10);
-
-              // Filter out historical diagrams (e.g. legacy 2021m bundles or jobs without valid recent dates)
-              const cleanJobs = extData.jobs.filter((j: any) => {
-                if (!j.name) return false;
-                if (j.bundle && String(j.bundle).includes('2021')) return false;
-                if (j.pdfname && String(j.pdfname).includes('2021')) return false;
-                if (j.from && String(j.from).trim() < oneYearAgoIso) return false;
-                return true;
-              });
-
-              const sanitizeHeadcodesMap = (rawMap: any): Record<string, string[]> => {
-                const sanitized: Record<string, string[]> = {};
-                if (!rawMap || typeof rawMap !== 'object') return sanitized;
-                for (const [k, list] of Object.entries(rawMap)) {
-                  if (!Array.isArray(list)) {
-                    sanitized[k] = [];
-                    continue;
-                  }
-                  const collapsed: string[] = [];
-                  for (const item of list) {
-                    const hc = String(item ?? '').trim().toUpperCase();
-                    if (hc && collapsed[collapsed.length - 1] !== hc) {
-                      collapsed.push(hc);
-                    }
-                  }
-                  sanitized[k] = collapsed;
-                }
-                return sanitized;
-              };
-
-              return res.json({
-                jobs: cleanJobs,
-                headcodesMap: sanitizeHeadcodesMap(extData.headcodesMap),
-                source: 'tdtools_api',
-                counts: {
-                  ...extData.counts,
-                  total_jobs: cleanJobs.length
-                },
-                dbErrors: extData.db_errors || null
-              });
-            }
-          } else {
-            console.warn(`TDtools API action=diagrams responded with HTTP ${extRes.status}`);
-          }
-        } catch (extErr) {
-          console.warn('Failed to load diagrams from TDtools API, checking CSV fallback:', extErr);
+          } catch {}
         }
+      }
+
+      if (canForceRefresh) {
+        clearDriverInfoCache();
+      } else {
+        if (diagramCatalogCache && diagramCatalogCache.cacheDate === todayLondon && diagramCatalogCache.apiUrl === normalizedApiUrl) {
+          return res.json({
+            ...diagramCatalogCache.payload,
+            cached: true,
+            cacheDate: diagramCatalogCache.cacheDate,
+            cachedAt: diagramCatalogCache.updatedAt
+          });
+        }
+
+        try {
+          const cachedRow = db.prepare(
+            "SELECT cache_date, api_url, payload, updated_at FROM diagram_catalog_cache WHERE id = 'default'"
+          ).get() as any;
+          if (cachedRow && cachedRow.cache_date === todayLondon && (cachedRow.api_url || '') === normalizedApiUrl && cachedRow.payload) {
+            const parsedPayload = JSON.parse(cachedRow.payload);
+            diagramCatalogCache = {
+              cacheDate: cachedRow.cache_date,
+              apiUrl: cachedRow.api_url || '',
+              payload: parsedPayload,
+              updatedAt: Number(cachedRow.updated_at) || Date.now()
+            };
+            return res.json({
+              ...parsedPayload,
+              cached: true,
+              cacheDate: diagramCatalogCache.cacheDate,
+              cachedAt: diagramCatalogCache.updatedAt
+            });
+          }
+        } catch (cacheReadErr) {
+          console.warn('Failed to read diagram_catalog_cache from SQLite:', cacheReadErr);
+        }
+
+        if (diagramCatalogFetchInFlight) {
+          const inFlightPayload = await diagramCatalogFetchInFlight;
+          if (inFlightPayload) {
+            return res.json(inFlightPayload);
+          }
+        }
+      }
+
+      // 1. Check if external TDtools API is configured to load r_jobs, r_jobs_stp, and r_jobs_headcodes (once per day)
+      if (normalizedApiUrl) {
+        const fetchTask = (async () => {
+          try {
+            const targetUrl = new URL(normalizedApiUrl);
+            targetUrl.searchParams.set('action', 'diagrams');
+            targetUrl.searchParams.set('_nocache', Date.now().toString());
+
+            const extRes = await fetch(targetUrl.toString(), {
+              cache: 'no-store',
+              headers: {
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {})
+              }
+            });
+            if (extRes.ok) {
+              const extData = await extRes.json();
+              if (extData && Array.isArray(extData.jobs)) {
+                const oneYearAgo = new Date();
+                oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+                const oneYearAgoIso = oneYearAgo.toISOString().substring(0, 10);
+
+                // Filter out historical diagrams (e.g. legacy 2021m bundles or jobs without valid recent dates)
+                const cleanJobs = extData.jobs.filter((j: any) => {
+                  if (!j.name) return false;
+                  if (j.bundle && String(j.bundle).includes('2021')) return false;
+                  if (j.pdfname && String(j.pdfname).includes('2021')) return false;
+                  if (j.from && String(j.from).trim() < oneYearAgoIso) return false;
+                  return true;
+                });
+
+                const sanitizeHeadcodesMap = (rawMap: any): Record<string, string[]> => {
+                  const sanitized: Record<string, string[]> = {};
+                  if (!rawMap || typeof rawMap !== 'object') return sanitized;
+                  for (const [k, list] of Object.entries(rawMap)) {
+                    if (!Array.isArray(list)) {
+                      sanitized[k] = [];
+                      continue;
+                    }
+                    const collapsed: string[] = [];
+                    for (const item of list) {
+                      const hc = String(item ?? '').trim().toUpperCase();
+                      if (hc && collapsed[collapsed.length - 1] !== hc) {
+                        collapsed.push(hc);
+                      }
+                    }
+                    sanitized[k] = collapsed;
+                  }
+                  return sanitized;
+                };
+
+                const resultPayload = {
+                  jobs: cleanJobs,
+                  headcodesMap: sanitizeHeadcodesMap(extData.headcodesMap),
+                  source: 'tdtools_api',
+                  counts: {
+                    ...extData.counts,
+                    total_jobs: cleanJobs.length
+                  },
+                  dbErrors: extData.db_errors || null
+                };
+
+                const nowTs = Date.now();
+                diagramCatalogCache = {
+                  cacheDate: todayLondon,
+                  apiUrl: normalizedApiUrl,
+                  payload: resultPayload,
+                  updatedAt: nowTs
+                };
+                try {
+                  db.prepare(`
+                    INSERT INTO diagram_catalog_cache (id, cache_date, api_url, payload, updated_at)
+                    VALUES ('default', ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                      cache_date = excluded.cache_date,
+                      api_url = excluded.api_url,
+                      payload = excluded.payload,
+                      updated_at = excluded.updated_at
+                  `).run(todayLondon, normalizedApiUrl, JSON.stringify(resultPayload), nowTs);
+                } catch (cacheWriteErr) {
+                  console.warn('Failed to persist diagram_catalog_cache to SQLite:', cacheWriteErr);
+                }
+
+                return {
+                  ...resultPayload,
+                  cached: false,
+                  cacheDate: todayLondon,
+                  cachedAt: nowTs
+                };
+              }
+            } else {
+              console.warn(`TDtools API action=diagrams responded with HTTP ${extRes.status}`);
+            }
+          } catch (extErr) {
+            console.warn('Failed to load diagrams from TDtools API, checking fallback cache/CSV:', extErr);
+          }
+          return null;
+        })();
+
+        if (!canForceRefresh) {
+          diagramCatalogFetchInFlight = fetchTask;
+        }
+        try {
+          const tdToolsPayload = await fetchTask;
+          if (tdToolsPayload) {
+            return res.json(tdToolsPayload);
+          }
+        } finally {
+          if (diagramCatalogFetchInFlight === fetchTask) {
+            diagramCatalogFetchInFlight = null;
+          }
+        }
+
+        // If TDtools API failed temporarily, serve any previously cached catalog for the same URL before falling back to CSV
+        try {
+          const staleRow = db.prepare(
+            "SELECT cache_date, api_url, payload, updated_at FROM diagram_catalog_cache WHERE id = 'default'"
+          ).get() as any;
+          if (staleRow && (staleRow.api_url || '') === normalizedApiUrl && staleRow.payload) {
+            const parsedStale = JSON.parse(staleRow.payload);
+            return res.json({
+              ...parsedStale,
+              cached: true,
+              stale: true,
+              cacheDate: staleRow.cache_date,
+              cachedAt: Number(staleRow.updated_at) || undefined
+            });
+          }
+        } catch {}
       }
 
       // 2. Fallback: Parse local CSV files from data/ directory
@@ -1166,6 +1320,7 @@ async function startServer() {
       // Save to both persistent database and demo memory database
       upsert(db);
       upsert(demoDb);
+      clearDiagramCatalogCache();
 
       res.json({ success: true, message: 'TDtools API settings saved successfully' });
     } catch (e: any) {
@@ -1236,6 +1391,7 @@ async function startServer() {
         };
         upsert(db);
         upsert(demoDb);
+        clearDiagramCatalogCache();
       }
 
       res.json({
@@ -1300,46 +1456,88 @@ async function startServer() {
           targetUrl.searchParams.set('job', jobStr);
 
           const targetUrlString = targetUrl.toString();
+          const todayLondon = getLondonTimeIso().substring(0, 10);
+          const canForceRefresh = req.query.refresh === '1' && !isDemo && (req.user?.role === 'admin' || req.user?.role === 'moderator');
           const cacheKey = createHash('sha256')
             .update(`${targetUrlString}\n${apiToken}`)
             .digest('hex');
-          const cachedEntry = driverInfoCache.get(cacheKey);
+          const cachedEntry = !canForceRefresh ? driverInfoCache.get(cacheKey) : undefined;
           let extData: any = null;
 
-          if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
+          if (cachedEntry && cachedEntry.cacheDate === todayLondon) {
             extData = cachedEntry.data;
           } else {
             if (cachedEntry) driverInfoCache.delete(cacheKey);
 
-            let pendingRequest = driverInfoRequestsInFlight.get(cacheKey);
-            if (!pendingRequest) {
-              pendingRequest = (async () => {
-                const externalRes = await fetch(targetUrlString, {
-                  headers: {
-                    ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {})
+            // Check persistent SQLite cache before hitting TDtools API
+            if (!canForceRefresh) {
+              try {
+                const dbCached = db.prepare(
+                  "SELECT cache_date, payload FROM driver_info_cache WHERE cache_key = ?"
+                ).get(cacheKey) as any;
+                if (dbCached && dbCached.cache_date === todayLondon && dbCached.payload) {
+                  extData = JSON.parse(dbCached.payload);
+                  while (driverInfoCache.size >= MAX_DRIVER_INFO_CACHE_ENTRIES) {
+                    const oldestKey = driverInfoCache.keys().next().value;
+                    if (oldestKey === undefined) break;
+                    driverInfoCache.delete(oldestKey);
                   }
-                });
-                return externalRes.ok ? externalRes.json() : null;
-              })();
-              driverInfoRequestsInFlight.set(cacheKey, pendingRequest);
+                  driverInfoCache.set(cacheKey, {
+                    cacheDate: todayLondon,
+                    data: extData
+                  });
+                }
+              } catch (dbCacheErr) {
+                console.warn('Failed to read driver_info_cache from SQLite:', dbCacheErr);
+              }
             }
 
-            try {
-              extData = await pendingRequest;
-              if (extData && extData.success !== false) {
-                while (driverInfoCache.size >= MAX_DRIVER_INFO_CACHE_ENTRIES) {
-                  const oldestKey = driverInfoCache.keys().next().value;
-                  if (oldestKey === undefined) break;
-                  driverInfoCache.delete(oldestKey);
+            if (!extData) {
+              let pendingRequest = !canForceRefresh ? driverInfoRequestsInFlight.get(cacheKey) : undefined;
+              if (!pendingRequest) {
+                pendingRequest = (async () => {
+                  const externalRes = await fetch(targetUrlString, {
+                    headers: {
+                      ...(apiToken ? { 'Authorization': `Bearer ${apiToken}` } : {})
+                    }
+                  });
+                  return externalRes.ok ? externalRes.json() : null;
+                })();
+                if (!canForceRefresh) {
+                  driverInfoRequestsInFlight.set(cacheKey, pendingRequest);
                 }
-                driverInfoCache.set(cacheKey, {
-                  expiresAt: Date.now() + DRIVER_INFO_CACHE_TTL_MS,
-                  data: extData
-                });
               }
-            } finally {
-              if (driverInfoRequestsInFlight.get(cacheKey) === pendingRequest) {
-                driverInfoRequestsInFlight.delete(cacheKey);
+
+              try {
+                extData = await pendingRequest;
+                if (extData && extData.success !== false) {
+                  while (driverInfoCache.size >= MAX_DRIVER_INFO_CACHE_ENTRIES) {
+                    const oldestKey = driverInfoCache.keys().next().value;
+                    if (oldestKey === undefined) break;
+                    driverInfoCache.delete(oldestKey);
+                  }
+                  driverInfoCache.set(cacheKey, {
+                    cacheDate: todayLondon,
+                    data: extData
+                  });
+                  try {
+                    db.prepare(`
+                      INSERT INTO driver_info_cache (cache_key, cache_date, payload, updated_at)
+                      VALUES (?, ?, ?, ?)
+                      ON CONFLICT(cache_key) DO UPDATE SET
+                        cache_date = excluded.cache_date,
+                        payload = excluded.payload,
+                        updated_at = excluded.updated_at
+                    `).run(cacheKey, todayLondon, JSON.stringify(extData), Date.now());
+                    db.prepare("DELETE FROM driver_info_cache WHERE cache_date < ?").run(todayLondon);
+                  } catch (dbWriteErr) {
+                    console.warn('Failed to persist driver_info_cache to SQLite:', dbWriteErr);
+                  }
+                }
+              } finally {
+                if (driverInfoRequestsInFlight.get(cacheKey) === pendingRequest) {
+                  driverInfoRequestsInFlight.delete(cacheKey);
+                }
               }
             }
           }
