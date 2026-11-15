@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { User } from '../types';
 import { 
-  LogOut, Home, Shield, Check, X, Edit2, Trash2, Key, Loader2, 
-  AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Moon, Sun, 
-  Calendar as CalendarIcon, User as UserIcon, HelpCircle, Users, 
+  Shield, Check, X, Edit2, Trash2, Key, Loader2, 
+  AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Users, 
   UserX, ShieldCheck, GraduationCap, CheckCheck, UserPlus,
   Briefcase, Server, Train
 } from 'lucide-react';
+import { getRoleLabel } from '../lib/allocations';
+import Header from './Header';
 import HelpModal from './HelpModal';
 import TDToolsConfigModal from './TDToolsConfigModal';
 import NREConfigModal from './NREConfigModal';
@@ -20,8 +21,6 @@ interface AdminUsersPageProps {
   toggleDarkMode: () => void;
 }
 
-import Header from './Header';
-
 export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, darkMode, toggleDarkMode }: AdminUsersPageProps) {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,6 +30,8 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
   const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [resetLink, setResetLink] = useState<string | null>(null);
+  const [resetModalError, setResetModalError] = useState<string | null>(null);
+  const [copiedResetLink, setCopiedResetLink] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: keyof User; direction: 'asc' | 'desc' } | null>(null);
@@ -113,6 +114,7 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
 
   const handleUpdateUser = async (updatedUser: User) => {
     setActionLoading(true);
+    setError(null);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/admin/users/${updatedUser.id}`, {
@@ -123,13 +125,16 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
         },
         body: JSON.stringify(updatedUser)
       });
-      if (!res.ok) throw new Error('Failed to update user');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to update user');
+      }
       
       setUsers(users.map(u => u.id === updatedUser.id ? { ...u, ...updatedUser } : u));
       fetchUsers();
       setEditingUser(null);
     } catch (err: any) {
-      alert(err.message);
+      setError(err.message || 'Failed to update user');
     } finally {
       setActionLoading(false);
     }
@@ -172,7 +177,7 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
       setTimeout(() => setBulkSuccessMessage(null), 5000);
       await fetchUsers();
     } catch (err: any) {
-      alert(err.message);
+      setError(err.message || 'Failed to bulk approve pending users');
     } finally {
       setActionLoading(false);
     }
@@ -210,6 +215,8 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
     if (!resetPasswordUser) return;
     setActionLoading(true);
     setResetLink(null);
+    setResetModalError(null);
+    setCopiedResetLink(false);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/admin/users/${resetPasswordUser.id}/reset-token`, {
@@ -218,13 +225,16 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
           'Authorization': `Bearer ${token}`
         }
       });
-      if (!res.ok) throw new Error('Failed to generate reset link');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to generate reset link');
+      }
       
       const data = await res.json();
       const link = `${window.location.origin}/?resetToken=${encodeURIComponent(data.token)}`;
       setResetLink(link);
     } catch (err: any) {
-      alert(err.message);
+      setResetModalError(err.message || 'Failed to generate reset link');
     } finally {
       setActionLoading(false);
     }
@@ -235,6 +245,7 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
     if (!resetPasswordUser || newPassword.length < 6) return;
 
     setActionLoading(true);
+    setResetModalError(null);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/admin/users/${resetPasswordUser.id}/password`, {
@@ -245,13 +256,18 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
         },
         body: JSON.stringify({ password: newPassword })
       });
-      if (!res.ok) throw new Error('Failed to reset password');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to reset password');
+      }
       
-      alert('Password reset successfully');
       setResetPasswordUser(null);
       setNewPassword('');
+      setResetLink(null);
+      setBulkSuccessMessage('Password reset successfully.');
+      setTimeout(() => setBulkSuccessMessage(null), 5000);
     } catch (err: any) {
-      alert(err.message);
+      setResetModalError(err.message || 'Failed to reset password');
     } finally {
       setActionLoading(false);
     }
@@ -343,19 +359,6 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
       return <ArrowUp className="w-4 h-4 ml-1 inline-block text-blue-600" />;
     }
     return <ArrowDown className="w-4 h-4 ml-1 inline-block text-blue-600" />;
-  };
-
-  const getRoleLabel = (role?: string) => {
-    switch (role) {
-      case 'admin':
-        return 'Admin';
-      case 'moderator':
-        return 'Moderator';
-      case 'driver_manager':
-        return 'Driver Manager';
-      default:
-        return 'Instructor';
-    }
   };
 
   const getRoleTextColor = (role?: string, isApproved?: boolean) => {
@@ -818,7 +821,12 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
                               )}
                               {user.role === 'admin' && !u.isDummy && (
                                 <button
-                                  onClick={() => setResetPasswordUser(u)}
+                                  onClick={() => {
+                                    setResetPasswordUser(u);
+                                    setResetModalError(null);
+                                    setResetLink(null);
+                                    setCopiedResetLink(false);
+                                  }}
                                   disabled={actionLoading}
                                   className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-slate-700 rounded transition-colors"
                                   title="Reset Password"
@@ -877,6 +885,13 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
             </div>
             
             <form onSubmit={handleResetPassword} className="p-6">
+              {resetModalError && (
+                <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/30 rounded-lg flex items-start gap-2 text-red-700 dark:text-red-400 text-xs">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{resetModalError}</span>
+                </div>
+              )}
+
               <p className="text-sm text-slate-600 dark:text-slate-300 mb-6">
                 Choose how to reset the password for <span className="font-semibold text-slate-900 dark:text-slate-100">{resetPasswordUser.name}</span> ({resetPasswordUser.email}).
               </p>
@@ -897,11 +912,12 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
                         type="button"
                         onClick={() => {
                           navigator.clipboard.writeText(resetLink);
-                          alert('Link copied to clipboard!');
+                          setCopiedResetLink(true);
+                          setTimeout(() => setCopiedResetLink(false), 3000);
                         }}
                         className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400 font-medium"
                       >
-                        Copy Link
+                        {copiedResetLink ? 'Copied to clipboard!' : 'Copy Link'}
                       </button>
                     </div>
                   ) : (

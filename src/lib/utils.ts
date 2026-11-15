@@ -57,3 +57,31 @@ export function getLondonDate(): Date {
     parseInt(dateParts.second)
   );
 }
+
+export function getLondonTodayKey(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/London',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+export function formatDateKey(date: Date): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export function obfuscateName(name?: string | null): string {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((part) => {
+      if (part.length <= 1) return part;
+      return part[0] + '*'.repeat(Math.max(3, part.length - 1));
+    })
+    .join(' ');
+}

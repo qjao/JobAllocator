@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { format, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks, subWeeks, isSameDay, startOfMonth, endOfMonth } from 'date-fns';
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Home, Loader2, CheckCircle2, Moon, Sun, LogOut, X, Pencil, Trash2, AlertTriangle, Shield, User as UserIcon, HelpCircle, Plus } from 'lucide-react';
-import { Allocation, User, Conflict } from '../types';
+import { format, startOfWeek, endOfWeek, eachDayOfInterval, addWeeks, subWeeks, isSameDay } from 'date-fns';
+import { ChevronLeft, ChevronRight, Loader2, CheckCircle2, X, Pencil, Trash2, Plus } from 'lucide-react';
+import { Allocation, User } from '../types';
 import { cn, getFinancialWeek, getLondonDate } from '../lib/utils';
+import { validateJobNumber, checkAllocationConflicts, getRoleLabel } from '../lib/allocations';
 import HelpModal from './HelpModal';
-
+import Header from './Header';
+import DiagramSelector from './DiagramSelector';
 import { io } from 'socket.io-client';
 
 interface MyCalendarProps {
@@ -14,9 +16,6 @@ interface MyCalendarProps {
   darkMode: boolean;
   toggleDarkMode: () => void;
 }
-
-import Header from './Header';
-import DiagramSelector from './DiagramSelector';
 
 export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggleDarkMode }: MyCalendarProps) {
   const [currentDate, setCurrentDate] = useState(getLondonDate());
@@ -28,26 +27,16 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
 
   // Edit state
   const [editingAllocation, setEditingAllocation] = useState<Allocation | null>(null);
-  const [editJobNumber, setEditJobNumber] = useState('');
-  const [editIsFullJob, setEditIsFullJob] = useState(true);
-  const [editHeadcodesInput, setEditHeadcodesInput] = useState('');
-  const [editNotesInput, setEditNotesInput] = useState('');
   const [editInstructorId, setEditInstructorId] = useState('');
   const [editFormError, setEditFormError] = useState('');
   const [editSubmitting, setEditSubmitting] = useState(false);
-  const [showEditNotes, setShowEditNotes] = useState(false);
-  
+
   // Delete state
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [showHelpModal, setShowHelpModal] = useState(false);
 
   // Claim state
   const [claimModalDate, setClaimModalDate] = useState<Date | null>(null);
-  const [claimJobNumber, setClaimJobNumber] = useState('');
-  const [claimIsFullJob, setClaimIsFullJob] = useState(true);
-  const [claimHeadcodesInput, setClaimHeadcodesInput] = useState('');
-  const [claimNotesInput, setClaimNotesInput] = useState('');
-  const [showClaimNotes, setShowClaimNotes] = useState(false);
   const [claimFormError, setClaimFormError] = useState('');
   const [claimSubmitting, setClaimSubmitting] = useState(false);
   const [claimInstructorId, setClaimInstructorId] = useState(user.id);
@@ -153,101 +142,6 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
     });
   };
 
-  const validateJobNumber = (job: string, dateStr: string): string | null => {
-    if (!/^[A-Za-z]{2}\d{4}$/.test(job)) {
-      return 'Job number must be in format LLXXXX (e.g., AW1101).';
-    }
-
-    const upperJob = job.toUpperCase();
-    const depotCode = upperJob.substring(0, 2);
-    const dayCode = upperJob.charAt(2);
-    const depotNum = upperJob.charAt(3);
-
-    const validDepots: Record<string, string> = {
-      'AW': '1',
-      'GP': '2',
-      'IF': '3',
-      'MH': '4',
-      'OC': '5',
-      'PU': '6',
-      'SH': '7'
-    };
-
-    if (!validDepots[depotCode]) {
-      return `Invalid depot code. Must be one of: ${Object.keys(validDepots).join(', ')}.`;
-    }
-
-    const exceptionSuffixes: Record<string, string[]> = {
-      'GP': ['001'],
-      'IF': ['002']
-    };
-    
-    const isException = exceptionSuffixes[depotCode]?.includes(upperJob.substring(3));
-
-    if (!isException && validDepots[depotCode] !== depotNum) {
-      return `Invalid depot number for ${depotCode}. Expected ${validDepots[depotCode]}, got ${depotNum}.`;
-    }
-
-    const [year, month, day] = dateStr.split('-').map(Number);
-    const date = new Date(year, month - 1, day);
-    const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    let expectedDayCodes: string[] = [];
-    let dayType = '';
-    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-      expectedDayCodes = ['1', '4'];
-      dayType = 'weekday';
-    } else if (dayOfWeek === 6) {
-      expectedDayCodes = ['2', '5'];
-      dayType = 'Saturday';
-    } else if (dayOfWeek === 0) {
-      expectedDayCodes = ['3', '6'];
-      dayType = 'Sunday';
-    }
-
-    if (!expectedDayCodes.includes(dayCode)) {
-      return `Invalid day code for a ${dayType}. Expected ${expectedDayCodes.join(' or ')}, got ${dayCode}.`;
-    }
-
-    return null; // Valid
-  };
-  const validateHeadcode = (hc: string) => /^\d[A-Za-z]\d{2}$/.test(hc);
-
-  const checkConflicts = (job: string, fullJob: boolean, headcodes: string[], dateStr: string, excludeId?: string): Conflict[] => {
-    const conflicts: Conflict[] = [];
-    const upperJob = job.toUpperCase();
-    
-    allocations.filter(a => a.date === dateStr).forEach(alloc => {
-      if (excludeId && alloc.id === excludeId) return;
-
-      if (alloc.jobNumber.toUpperCase() === upperJob) {
-        if (alloc.isFullJob) {
-          conflicts.push({
-            type: 'full_job',
-            message: `${alloc.instructorName} has already claimed the full job ${upperJob}.`,
-            conflictingAllocation: alloc
-          });
-        } else if (fullJob) {
-          conflicts.push({
-            type: 'full_job',
-            message: `${alloc.instructorName} has already claimed parts of job ${upperJob}. You cannot claim the full job.`,
-            conflictingAllocation: alloc
-          });
-        } else {
-          const overlapping = headcodes.filter(hc => alloc.headcodes.includes(hc.toUpperCase()));
-          if (overlapping.length > 0) {
-            conflicts.push({
-              type: 'headcode',
-              message: `${alloc.instructorName} has already claimed headcode(s) ${overlapping.join(', ')} for job ${upperJob}.`,
-              conflictingAllocation: alloc
-            });
-          }
-        }
-      }
-    });
-
-    return conflicts;
-  };
-
   const openEditModal = (alloc: Allocation) => {
     setEditingAllocation(alloc);
     setEditInstructorId(alloc.instructorId);
@@ -274,11 +168,6 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
 
   const openClaimModal = (date: Date) => {
     setClaimModalDate(date);
-    setClaimJobNumber('');
-    setClaimIsFullJob(true);
-    setClaimHeadcodesInput('');
-    setClaimNotesInput('');
-    setShowClaimNotes(false);
     setClaimFormError('');
     setClaimInstructorId(user.id);
   };
@@ -294,7 +183,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
       throw new Error(jobError); // DiagramSelector needs a rejected promise or form error
     }
 
-    const conflicts = checkConflicts(jobNumber, isFullJob, headcodes, dateStr);
+    const conflicts = checkAllocationConflicts(allocations, jobNumber, isFullJob, headcodes, dateStr);
     if (conflicts.length > 0) {
       setClaimFormError(conflicts[0].message);
       throw new Error(conflicts[0].message);
@@ -328,69 +217,6 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
       console.error('Error adding allocation:', err);
       setClaimFormError('Unable to claim job. Please contact an admin.');
       throw err;
-    } finally {
-      setClaimSubmitting(false);
-    }
-  };
-
-  const handleClaimSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!claimModalDate) return;
-    setClaimFormError('');
-
-    const job = claimJobNumber.trim().toUpperCase();
-    const dateStr = format(claimModalDate, 'yyyy-MM-dd');
-    const jobError = validateJobNumber(job, dateStr);
-    if (jobError) {
-      setClaimFormError(jobError);
-      return;
-    }
-
-    let parsedHeadcodes: string[] = [];
-    if (!claimIsFullJob) {
-      parsedHeadcodes = claimHeadcodesInput.split(',').map(h => h.trim().toUpperCase()).filter(h => h);
-      if (parsedHeadcodes.length === 0) {
-        setClaimFormError('Please enter at least one headcode for a partial job.');
-        return;
-      }
-      for (const hc of parsedHeadcodes) {
-        if (!validateHeadcode(hc)) {
-          setClaimFormError(`Invalid headcode format: ${hc}. Must be XLXX (e.g., 1A23).`);
-          return;
-        }
-      }
-    }
-
-    const conflicts = checkConflicts(job, claimIsFullJob, parsedHeadcodes, dateStr);
-    if (conflicts.length > 0) {
-      setClaimFormError(conflicts[0].message);
-      return;
-    }
-
-    setClaimSubmitting(true);
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/allocations', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          jobNumber: job,
-          date: dateStr,
-          isFullJob: claimIsFullJob,
-          headcodes: claimIsFullJob ? [] : parsedHeadcodes,
-          notes: claimNotesInput.trim()
-        })
-      });
-
-      if (!res.ok) throw new Error('Failed to create allocation');
-
-      setClaimModalDate(null);
-    } catch (error) {
-      console.error("Error creating allocation:", error);
-      setClaimFormError('Unable to claim job. Please contact an admin.');
     } finally {
       setClaimSubmitting(false);
     }
@@ -732,6 +558,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
               selectedDate={new Date(editingAllocation.date)}
               allocations={allocations.filter(a => a.id !== editingAllocation.id)}
               isDemo={user?.isDemo}
+              currentUserName={user.name}
               onAddAllocation={async (job, isFull, hcs, notes) => {
                 setEditSubmitting(true);
                 try {
@@ -781,14 +608,11 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors"
                     required
                   >
-                    {users.map(u => {
-                      const roleLabel = u.role === 'driver_manager' ? 'Driver Manager' : u.role === 'moderator' ? 'Moderator' : u.role === 'admin' ? 'Admin' : 'Instructor';
-                      return (
-                        <option key={u.id} value={u.id}>
-                          {u.name} {u.id === user.id ? '(You)' : `(${roleLabel})`}
-                        </option>
-                      );
-                    })}
+                    {users.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} {u.id === user.id ? '(You)' : `(${getRoleLabel(u.role)})`}
+                      </option>
+                    ))}
                   </select>
                 </div>
               )}
@@ -812,6 +636,7 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
               formError={claimFormError}
               submitting={claimSubmitting}
               isDemo={user?.isDemo}
+              currentUserName={user.name}
               onCancel={() => setClaimModalDate(null)}
               title={`Claim Job for ${format(claimModalDate, 'MMM d, yyyy')}`}
             >
@@ -826,14 +651,11 @@ export default function MyCalendar({ user, onNavigate, onLogout, darkMode, toggl
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 text-sm transition-colors"
                   >
                     <option value={user.id}>Myself ({user.name})</option>
-                    {users.filter(u => u.id !== user.id).map(u => {
-                      const roleLabel = u.role === 'driver_manager' ? 'Driver Manager' : u.role === 'moderator' ? 'Moderator' : u.role === 'admin' ? 'Admin' : 'Instructor';
-                      return (
-                        <option key={u.id} value={u.id}>
-                          {u.name} ({roleLabel})
-                        </option>
-                      );
-                    })}
+                    {users.filter(u => u.id !== user.id).map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({getRoleLabel(u.role)})
+                      </option>
+                    ))}
                   </select>
                 </div>
               )}

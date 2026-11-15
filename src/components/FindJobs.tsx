@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { CalendarIcon, LogOut, Search, Train, Shield, User as UserIcon, HelpCircle, Sun, Moon, AlertTriangle, ChevronRight, Navigation, Copy, BarChart3 } from 'lucide-react';
+import { Search, Train, Shield, AlertTriangle, Navigation, Copy, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { User } from '../types';
+import { formatDateKey, getLondonDate } from '../lib/utils';
+import Header from './Header';
 import HelpModal from './HelpModal';
 
 interface FindJobsProps {
@@ -116,9 +118,6 @@ const PRESET_ROUTES = [
   { label: 'OOC - Pad', origin: 'OLDOXRS', destination: 'PAD' },
 ] as const;
 
-import Header from './Header';
-import { getLondonDate } from '../lib/utils';
-
 export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: FindJobsProps) {
   const isDemoUser = Boolean(user.isDemo || user.email?.toLowerCase().startsWith('demo-'));
   const [crs, setCrs] = useState('PAD');
@@ -159,10 +158,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
 
   useEffect(() => {
     const now = getLondonDate();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    const todayStr = `${yyyy}-${mm}-${dd}`;
+    const todayStr = formatDateKey(now);
     setDate(todayStr);
     setHour(String(now.getHours()).padStart(2, '0'));
     setMinute(String(now.getMinutes()).padStart(2, '0'));

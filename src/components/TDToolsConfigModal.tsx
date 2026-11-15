@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { X, Check, Copy, ShieldCheck, Loader2, AlertCircle, Key, Server, RefreshCw, FileText, Database, ArrowRight } from 'lucide-react';
+import { X, Check, Copy, ShieldCheck, Loader2, AlertCircle, Key, Server, RefreshCw, FileText, Database } from 'lucide-react';
 
 interface TDToolsConfigModalProps {
   isOpen: boolean;
@@ -19,8 +19,6 @@ export default function TDToolsConfigModal({ isOpen, onClose, isAdmin, onSyncSuc
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Testing connection state
-  const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     responseTimeMs?: number;

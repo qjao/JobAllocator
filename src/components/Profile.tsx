@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { Train, LogOut, Home, AlertTriangle, CheckCircle2, Loader2, Moon, Sun, Calendar as CalendarIcon, Shield, HelpCircle, User as UserIcon } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import Header from './Header';
 import HelpModal from './HelpModal';
 
 interface ProfileProps {
@@ -11,8 +12,6 @@ interface ProfileProps {
   toggleDarkMode: () => void;
   onUpdateUser: (user: User) => void;
 }
-
-import Header from './Header';
 
 export default function Profile({ user, onLogout, onNavigate, darkMode, toggleDarkMode, onUpdateUser }: ProfileProps) {
   const [currentPassword, setCurrentPassword] = useState('');

@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Loader2, Plus, AlertTriangle, X, Pencil, Maximize2, User as UserIcon, MapPin, Server, ExternalLink, RefreshCw } from 'lucide-react';
+import { Loader2, Plus, AlertTriangle, X, Maximize2, User as UserIcon, MapPin, Server, RefreshCw } from 'lucide-react';
 import { Allocation } from '../types';
+import { formatDateKey, getLondonTodayKey, obfuscateName } from '../lib/utils';
+import { collapseConsecutiveHeadcodes, getClaimedHeadcodeSet } from '../lib/allocations';
 import TDToolsConfigModal from './TDToolsConfigModal';
 import DriverEmailLink from './DriverEmailLink';
 
@@ -67,13 +69,6 @@ const DEPOT_NAMES: Record<string, string> = {
 
 let clientDiagramsCache: { dateKey: string; data: any } | null = null;
 const clientDriverInfoCache = new Map<string, { dateKey: string; data: any }>();
-const getLondonTodayKey = () =>
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/London',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date());
 
 export default function DiagramSelector({ darkMode, selectedDate, allocations, onAddAllocation, formError, submitting, onCancel, title, isDemo, canAccessTDTools = false, canRefreshDiagrams = false, currentUserName = '', initialAllocation, children }: DiagramSelectorProps) {
   const [loading, setLoading] = useState(true);
@@ -96,7 +91,6 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   const [refreshing, setRefreshing] = useState(false);
   const [driverRefreshNonce, setDriverRefreshNonce] = useState(0);
   const forceDriverRefreshRef = useRef(false);
-  const [sourceInfo, setSourceInfo] = useState<{ source?: string; totalJobs?: number; counts?: any; dbErrors?: any } | null>(null);
 
   // Derived data
   const [depots, setDepots] = useState<string[]>([]);
@@ -137,7 +131,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       return;
     }
 
-    const dateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+    const dateStr = formatDateKey(selectedDate);
     const todayKey = getLondonTodayKey();
     const cacheKey = `${isDemo ? 'demo' : 'real'}::${dateStr}::${selectedDiagram}`;
     const cached = clientDriverInfoCache.get(cacheKey);
@@ -193,12 +187,6 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
 
       setJobs(unifiedJobs);
       setHeadcodesMap(hm);
-      setSourceInfo({
-        source: data.source,
-        totalJobs: unifiedJobs.length,
-        counts: data.counts,
-        dbErrors: data.dbErrors
-      });
 
       // Extract unique depots (strictly 2 uppercase letters e.g. AW, GP, IF, MH, OC, PU, SH)
       const depotSet = new Set<string>();
@@ -277,7 +265,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
         dayLetters = ['X', 'SUN'];
       }
       
-      const selectedDateStr = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+      const selectedDateStr = formatDateKey(selectedDate);
 
       const exceptionSuffixes: Record<string, string[]> = {
         'GP': ['001'],
@@ -358,21 +346,10 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   }, [selectedDepot, selectedDiagram]);
 
   // Handle diagram selection change without clearing headcodes if same diagram
-  const claimedHeadcodes = React.useMemo(() => {
-    if (!selectedDiagram) return new Set<string>();
-    const normSelected = selectedDiagram.trim().toUpperCase();
-    const matching = allocations.filter(a => a.jobNumber.trim().toUpperCase() === normSelected);
-    const claimed = new Set<string>();
-    matching.forEach(a => {
-      if (!a.isFullJob && Array.isArray(a.headcodes)) {
-        a.headcodes.forEach(hc => {
-          const normalized = String(hc || '').trim().toUpperCase();
-          if (normalized) claimed.add(normalized);
-        });
-      }
-    });
-    return claimed;
-  }, [selectedDiagram, allocations]);
+  const claimedHeadcodes = React.useMemo(
+    () => getClaimedHeadcodeSet(allocations, selectedDiagram),
+    [selectedDiagram, allocations]
+  );
 
   const isSelectedFullyBooked = React.useMemo(() => {
     if (!selectedDiagram) return false;
@@ -395,14 +372,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
       const job = availableDiagrams.find(j => j.name === selectedDiagram);
       if (job) {
         const key = job.isStp ? `stp_${job.jobid}` : `ltp_${job.jobid}`;
-        const rawHcs = headcodesMap[key] || [];
-        const hcs: string[] = [];
-        for (const raw of rawHcs) {
-          const hc = String(raw || '').trim().toUpperCase();
-          if (hc && hcs[hcs.length - 1] !== hc) {
-            hcs.push(hc);
-          }
-        }
+        const hcs = collapseConsecutiveHeadcodes(headcodesMap[key]);
         setAvailableHeadcodes(hcs);
         
         if (!initialized && initialAllocation) {
@@ -508,19 +478,8 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
   const isCancelled = driverInfo?.cancelled ?? currentJob?.cancel ?? false;
 
   const isDemoActive = Boolean(isDemo || driverInfo?.isDemo);
-  const obfuscateName = (name?: string) => {
-    if (!name) return '';
-    return name
-      .trim()
-      .split(/\s+/)
-      .map(part => {
-        if (part.length <= 1) return part;
-        return part[0] + '*'.repeat(Math.max(3, part.length - 1));
-      })
-      .join(' ');
-  };
   const displayDriverName = isDemoActive ? obfuscateName(driverInfo?.driverName) : driverInfo?.driverName;
-  const selectedDateString = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')}`;
+  const selectedDateString = formatDateKey(selectedDate);
 
   if (apiError) {
     return (
@@ -643,15 +602,7 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                   
                   const normNew = newDiagram.trim().toUpperCase();
                   const matching = allocations.filter(a => a.jobNumber.trim().toUpperCase() === normNew);
-                  const claimed = new Set<string>();
-                  matching.forEach(a => {
-                    if (!a.isFullJob && Array.isArray(a.headcodes)) {
-                      a.headcodes.forEach(hc => {
-                        const normalized = String(hc || '').trim().toUpperCase();
-                        if (normalized) claimed.add(normalized);
-                      });
-                    }
-                  });
+                  const claimed = getClaimedHeadcodeSet(allocations, normNew);
                   const isPartiallyBookedNew = claimed.size > 0 || matching.some(a => a.isFullJob);
                   
                   setIsFullDiagram(!isPartiallyBookedNew);
@@ -664,19 +615,9 @@ export default function DiagramSelector({ darkMode, selectedDate, allocations, o
                 {availableDiagrams.map(diagram => {
                   const normDiagramName = diagram.name.trim().toUpperCase();
                   const matchingAllocations = allocations.filter(a => a.jobNumber.trim().toUpperCase() === normDiagramName);
-                  const claimedSet = new Set<string>();
-                  matchingAllocations.forEach(a => {
-                    if (!a.isFullJob && Array.isArray(a.headcodes)) {
-                      a.headcodes.forEach(hc => {
-                        const normalized = String(hc || '').trim().toUpperCase();
-                        if (normalized) claimedSet.add(normalized);
-                      });
-                    }
-                  });
+                  const claimedSet = getClaimedHeadcodeSet(allocations, normDiagramName);
                   const key = diagram.isStp ? `stp_${diagram.jobid}` : `ltp_${diagram.jobid}`;
-                  const diagramHeadcodes = (headcodesMap[key] || [])
-                    .map(raw => String(raw || '').trim().toUpperCase())
-                    .filter(Boolean);
+                  const diagramHeadcodes = collapseConsecutiveHeadcodes(headcodesMap[key]);
                   const allHeadcodesClaimed = diagramHeadcodes.length > 0 && diagramHeadcodes.every(hc => claimedSet.has(hc));
                   const isFullyBooked = matchingAllocations.some(a => a.isFullJob) || allHeadcodesClaimed;
                   const isPartiallyBooked = !isFullyBooked && matchingAllocations.length > 0;

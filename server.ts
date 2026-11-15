@@ -8,14 +8,42 @@ import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
+import net from 'net';
 import { sendPasswordResetEmail, sendNewRegistrationAlert, sendInstructorApprovedEmail, isSmtpConfigured } from './emailService';
 const portArgIndex = process.argv.indexOf('--port');
 const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
 const PORT = cliPort || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-change-in-prod';
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'your@admin.com';
 const PUBLIC_URL = process.env.PUBLIC_URL || 'localhost';
+
+// Ensure data directory exists
+const dataDir = path.join(process.cwd(), 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
+function resolveJwtSecret(): string {
+  if (process.env.JWT_SECRET && process.env.JWT_SECRET.trim().length > 0) {
+    return process.env.JWT_SECRET.trim();
+  }
+  const secretPath = path.join(dataDir, '.jwt_secret');
+  try {
+    if (fs.existsSync(secretPath)) {
+      const stored = fs.readFileSync(secretPath, 'utf8').trim();
+      if (stored.length >= 32) return stored;
+    }
+    const generated = randomBytes(48).toString('hex');
+    fs.writeFileSync(secretPath, generated, { mode: 0o600 });
+    return generated;
+  } catch {
+    return randomBytes(48).toString('hex');
+  }
+}
+
+const JWT_SECRET = resolveJwtSecret();
+const PLACEHOLDER_ADMIN_EMAILS = new Set(['your@admin.com', 'admin@example.com']);
+const rawAdminEmail = (process.env.ADMIN_EMAIL || '').trim();
+const ADMIN_EMAIL = rawAdminEmail && !PLACEHOLDER_ADMIN_EMAILS.has(rawAdminEmail.toLowerCase()) ? rawAdminEmail : '';
 
 function getClientBaseUrl(req: express.Request): string {
   if (process.env.APP_URL && process.env.APP_URL.trim().length > 0 && process.env.APP_URL !== 'MY_APP_URL') {
@@ -29,12 +57,6 @@ function getClientBaseUrl(req: express.Request): string {
   const host = req.headers.host;
   const proto = (req.headers['x-forwarded-proto'] as string) || 'http';
   return `${proto}://${host || 'localhost:3000'}`;
-}
-
-// Ensure data directory exists
-const dataDir = path.join(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
 }
 
 // Initialize DB
@@ -167,14 +189,148 @@ initDb(demoDb);
 seedDailyAllocations(db);
 seedDailyAllocations(demoDb);
 
-const getDb = (req) => (req && req.user && req.user.isDemo) ? demoDb : db;
+const getDb = (req: any) => (req && req.user && req.user.isDemo) ? demoDb : db;
+const getScopeRoom = (req: any): 'demo' | 'real' => (req && req.user && req.user.isDemo) ? 'demo' : 'real';
 
-// Auto-approve existing users and set admin
-// db.exec("UPDATE users SET isApproved = 1 WHERE isApproved = 0");
-// db.exec("UPDATE users SET role = 'admin' WHERE email = 'joao.segatti@gmail.com'");
+function collapseConsecutiveHeadcodes(list: unknown): string[] {
+  if (!Array.isArray(list)) return [];
+  const result: string[] = [];
+  for (const raw of list) {
+    const hc = String(raw ?? '').trim().toUpperCase();
+    if (hc && result[result.length - 1] !== hc) {
+      result.push(hc);
+    }
+  }
+  return result;
+}
+
+function obfuscateDriverName(name: string): string {
+  if (!name || typeof name !== 'string') return '';
+  return name
+    .trim()
+    .split(/\s+/)
+    .map(part => (part.length <= 1 ? part : part[0] + '*'.repeat(Math.max(3, part.length - 1))))
+    .join(' ');
+}
+
+function passwordFingerprint(passwordHash?: string | null): string {
+  return createHash('sha256').update(String(passwordHash || '')).digest('hex').slice(0, 12);
+}
+
+function parseAllocationRow(row: any) {
+  let rawHeadcodes: unknown = [];
+  try {
+    rawHeadcodes = row.headcodes ? JSON.parse(row.headcodes) : [];
+  } catch {
+    rawHeadcodes = [];
+  }
+  return {
+    ...row,
+    isFullJob: Boolean(row.isFullJob),
+    headcodes: collapseConsecutiveHeadcodes(rawHeadcodes),
+  };
+}
+
+const USER_SUMMARY_SELECT = `
+  SELECT 
+    u.id, 
+    u.email, 
+    u.name, 
+    u.role, 
+    u.isApproved, 
+    u.approval_email_sent,
+    u.last_login_at,
+    u.isDummy,
+    u.notes,
+    (
+      SELECT MAX(COALESCE(a.updatedAt, a.createdAt)) 
+      FROM allocations a 
+      WHERE a.instructorId = u.id OR (a.instructorId IS NULL AND a.instructorName = u.name)
+    ) AS last_allocation_at
+  FROM users u
+`;
+
+function formatUserRow(u: any) {
+  const lastAllocIso = u.last_allocation_at ? new Date(u.last_allocation_at).toISOString() : null;
+  return {
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role,
+    isApproved: Boolean(u.isApproved),
+    approval_email_sent: Boolean(u.approval_email_sent),
+    isDummy: Boolean(u.isDummy),
+    notes: u.notes || null,
+    lastLoginAt: u.last_login_at || null,
+    lastAllocationAt: lastAllocIso,
+    last_login_at: u.last_login_at || null,
+    last_allocation_at: lastAllocIso,
+  };
+}
+
+function isDisallowedHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
+    return true;
+  }
+  const ipVersion = net.isIP(host);
+  if (ipVersion === 4) {
+    const parts = host.split('.').map(Number);
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+  } else if (ipVersion === 6) {
+    if (host === '::' || host === '::1' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateExternalUrl(rawUrl: string): URL | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    if (isDisallowedHost(parsed.hostname)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function createIpRateLimiter(windowMs: number, maxRequests: number, message: string) {
+  const hits = new Map<string, { count: number; resetAt: number }>();
+  const cleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of hits.entries()) {
+      if (v.resetAt <= now) hits.delete(k);
+    }
+  }, Math.min(windowMs, 5 * 60 * 1000));
+  cleanupTimer.unref();
+
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const forwarded = req.headers['x-forwarded-for'];
+    const ip = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim() || req.ip || 'unknown';
+    const now = Date.now();
+    const entry = hits.get(ip);
+    if (!entry || entry.resetAt <= now) {
+      hits.set(ip, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    entry.count += 1;
+    if (entry.count > maxRequests) {
+      return res.status(429).json({ error: message });
+    }
+    return next();
+  };
+}
 
 async function startServer() {
   const app = express();
+  app.disable('x-powered-by');
   const httpServer = createServer(app);
   
   let io: Server;
@@ -197,7 +353,23 @@ async function startServer() {
     app.use(cors());
   }
 
-  app.use(express.json());
+  // Safe HTTP security headers (omit X-Frame-Options so AI Studio preview iframe remains supported)
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    next();
+  });
+
+  app.use(express.json({ limit: '1mb' }));
+
+  const emitToScope = (req: any, event: string, payload?: any) => {
+    io.to(getScopeRoom(req)).emit(event, payload);
+  };
+
+  const authRateLimiter = createIpRateLimiter(15 * 60 * 1000, 30, 'Too many authentication attempts. Please try again later.');
+  const passwordResetLimiter = createIpRateLimiter(15 * 60 * 1000, 15, 'Too many password reset requests. Please try again later.');
+  const proxyRateLimiter = createIpRateLimiter(60 * 1000, 120, 'Too many image requests. Please slow down.');
 
   // Track active user page access and update last access timestamp in database (throttled to 60s)
   const userAccessThrottle = new Map<string, number>();
@@ -233,12 +405,14 @@ async function startServer() {
   };
 
   const requireAdmin = (req: any, res: any, next: any) => {
-    if (req.user.role !== 'admin') return res.status(401).json({ error: 'Admin access required' });
+    if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
     next();
   };
 
   const requireAdminOrModerator = (req: any, res: any, next: any) => {
-    if (req.user.role !== 'admin' && req.user.role !== 'moderator') return res.status(401).json({ error: 'Admin or Moderator access required' });
+    if (req.user?.role !== 'admin' && req.user?.role !== 'moderator') {
+      return res.status(403).json({ error: 'Admin or Moderator access required' });
+    }
     next();
   };
 
@@ -252,39 +426,98 @@ async function startServer() {
   // --- API Routes ---
 
   // Auth: Register
-  app.post('/api/auth/register', (req, res) => {
+  app.post('/api/auth/register', authRateLimiter, (req, res) => {
     const { email, password, name } = req.body;
+    if (typeof email !== 'string' || typeof password !== 'string' || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Name, email, and password are required.' });
+    }
+    const normalizedEmail = email.trim().toLowerCase();
+    const trimmedName = name.trim();
+    if (!trimmedName || trimmedName.length > 100) {
+      return res.status(400).json({ error: 'Please enter a valid full name.' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || normalizedEmail.length > 254) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+    if (password.length < 6 || password.length > 128) {
+      return res.status(400).json({ error: 'Password must be between 6 and 128 characters.' });
+    }
+
     try {
       const hashedPassword = bcrypt.hashSync(password, 10);
       const id = uuidv4();
+      const nowIso = new Date().toISOString();
 
-      let role = 'instructor';
-      let isApproved = 0;
+      const registerTx = db.transaction(() => {
+        const existing = db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(normalizedEmail);
+        if (existing) {
+          return { conflict: true as const };
+        }
 
-      if (ADMIN_EMAIL && email === ADMIN_EMAIL) {
-        role = 'admin';
-        isApproved = 1;
+        let role = 'instructor';
+        let isApproved = 0;
+
+        if (ADMIN_EMAIL) {
+          if (normalizedEmail === ADMIN_EMAIL.toLowerCase()) {
+            role = 'admin';
+            isApproved = 1;
+          }
+        } else {
+          // Preview/local fallback: if no ADMIN_EMAIL is configured and no real admin exists yet,
+          // bootstrap the first registered user as an approved admin.
+          const adminCountRow = db
+            .prepare("SELECT COUNT(*) as c FROM users WHERE role = 'admin' AND COALESCE(isDummy, 0) = 0")
+            .get() as { c: number };
+          if (adminCountRow.c === 0) {
+            role = 'admin';
+            isApproved = 1;
+          }
+        }
+
+        db.prepare(
+          'INSERT INTO users (id, email, password, name, role, isApproved, approval_email_sent, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(id, normalizedEmail, hashedPassword, trimmedName, role, isApproved, isApproved ? 1 : 0, isApproved ? nowIso : null);
+
+        return { conflict: false as const, role, isApproved };
+      });
+
+      const result = registerTx();
+      if (result.conflict) {
+        return res.status(400).json({ error: 'Email already exists' });
       }
 
-      const stmt = getDb(req).prepare('INSERT INTO users (id, email, password, name, role, isApproved, approval_email_sent) VALUES (?, ?, ?, ?, ?, ?, ?)');
-      stmt.run(id, email, hashedPassword, name, role, isApproved, isApproved ? 1 : 0);
-      
-      if (!isApproved) {
+      if (!result.isApproved) {
         const baseUrl = getClientBaseUrl(req);
         sendNewRegistrationAlert({
-          adminEmail: ADMIN_EMAIL,
-          newUser: { id, name: name || 'New Instructor', email },
+          adminEmail: ADMIN_EMAIL || rawAdminEmail || 'your@admin.com',
+          newUser: { id, name: trimmedName, email: normalizedEmail },
           baseUrl,
         }).catch((err) => {
           console.error('[Registration Alert] Notification error:', err);
         });
 
-        io.emit('users_updated');
+        io.to('real').emit('users_updated');
         return res.status(201).json({ message: 'Registration successful. Pending admin approval.' });
       }
 
-      const token = jwt.sign({ id, email, name, role, isApproved }, JWT_SECRET);
-      res.json({ token, user: { id, email, name, role, isApproved } });
+      const token = jwt.sign(
+        { id, email: normalizedEmail, name: trimmedName, role: result.role, isApproved: true },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      io.to('real').emit('users_updated');
+      res.json({
+        token,
+        user: {
+          id,
+          email: normalizedEmail,
+          name: trimmedName,
+          role: result.role,
+          isApproved: true,
+          lastLoginAt: nowIso,
+          last_login_at: nowIso
+        }
+      });
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         res.status(400).json({ error: 'Email already exists' });
@@ -294,19 +527,17 @@ async function startServer() {
     }
   });
 
-  // Auth: Login
-  app.post('/api/auth/demo', (req, res) => {
+  // Auth: Demo
+  app.post('/api/auth/demo', authRateLimiter, (_req, res) => {
     const id = uuidv4();
-    const name = `Demo User ${id.substring(0,4)}`;
+    const name = `Demo User ${id.substring(0, 4)}`;
     const email = `demo-${id}@example.com`;
     const nowIso = new Date().toISOString();
     demoDb.prepare('INSERT INTO users (id, email, password, name, role, isApproved, approval_email_sent, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, email, '', name, 'admin', 1, 1, nowIso);
     
-    // Create some initial allocations for demo users
     const today = new Date('2026-09-12T12:00:00Z');
     const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     
-    // Seed only if empty (prevent flooding)
     const count = demoDb.prepare('SELECT count(*) as c FROM allocations').get() as { c: number };
     if (count.c === 0) {
       demoDb.prepare('INSERT INTO allocations (id, date, instructorId, instructorName, jobNumber, isFullJob, headcodes, notes, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
@@ -314,18 +545,21 @@ async function startServer() {
       );
     }
     
-    const token = jwt.sign({ id, email, name, role: 'admin', isApproved: true, isDemo: true }, JWT_SECRET);
+    const token = jwt.sign({ id, email, name, role: 'admin', isApproved: true, isDemo: true }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user: { id, email, name, role: 'admin', isApproved: true, isDemo: true, lastLoginAt: nowIso, last_login_at: nowIso } });
   });
 
-  
-
-  app.post('/api/auth/login', (req, res) => {
+  // Auth: Login
+  app.post('/api/auth/login', authRateLimiter, (req, res) => {
     try {
       const { email, password } = req.body;
-      const user = getDb(req).prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
+      if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+      }
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = getDb(req).prepare('SELECT * FROM users WHERE LOWER(email) = ?').get(normalizedEmail) as any;
       
-      if (!user || !bcrypt.compareSync(password, user.password)) {
+      if (!user || user.isDummy || !user.password || !bcrypt.compareSync(password, user.password)) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
@@ -336,7 +570,7 @@ async function startServer() {
       const nowIso = new Date().toISOString();
       getDb(req).prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(nowIso, user.id);
 
-      const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role, isApproved: Boolean(user.isApproved) }, JWT_SECRET);
+      const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role, isApproved: Boolean(user.isApproved) }, JWT_SECRET, { expiresIn: '7d' });
       res.json({
         token,
         user: {
@@ -357,32 +591,13 @@ async function startServer() {
 
   // Auth: Me
   app.get('/api/auth/me', authenticateToken, (req: any, res) => {
-    const user = getDb(req).prepare(`
-      SELECT u.id, u.email, u.name, u.role, u.isApproved, u.approval_email_sent, u.last_login_at,
-        (
-          SELECT MAX(COALESCE(a.updatedAt, a.createdAt))
-          FROM allocations a
-          WHERE a.instructorId = u.id OR (a.instructorId IS NULL AND a.instructorName = u.name)
-        ) AS last_allocation_at
-      FROM users u
-      WHERE u.id = ?
-    `).get(req.user.id) as any;
+    const user = getDb(req).prepare(`${USER_SUMMARY_SELECT} WHERE u.id = ?`).get(req.user.id) as any;
 
     if (!user || !user.isApproved) return res.status(401).json({ error: 'Account not approved' });
-    const lastAllocIso = user.last_allocation_at ? new Date(user.last_allocation_at).toISOString() : null;
     res.json({
       user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        isApproved: Boolean(user.isApproved),
-        approval_email_sent: Boolean(user.approval_email_sent),
-        lastLoginAt: user.last_login_at || null,
-        lastAllocationAt: lastAllocIso,
-        last_login_at: user.last_login_at || null,
-        last_allocation_at: lastAllocIso,
-        isDemo: Boolean((req as any).user?.isDemo)
+        ...formatUserRow(user),
+        isDemo: Boolean(req.user?.isDemo)
       }
     });
   });
@@ -390,16 +605,43 @@ async function startServer() {
   // User: Update Profile
   app.put('/api/users/me', authenticateToken, (req: any, res) => {
     const { name, email } = req.body;
-    try {
-      getDb(req).prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(name, email, req.user.id);
-      
-      // Update instructorName in allocations as well
-      getDb(req).prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(name, req.user.id);
+    if (typeof name !== 'string' || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Name and email are required.' });
+    }
+    const trimmedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!trimmedName || trimmedName.length > 100) {
+      return res.status(400).json({ error: 'Please enter a valid name.' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || normalizedEmail.length > 254) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
 
-      const updatedUser = getDb(req).prepare('SELECT id, email, name, role, isApproved FROM users WHERE id = ?').get(req.user.id) as any;
-      const token = jwt.sign({ id: updatedUser.id, email: updatedUser.email, name: updatedUser.name, role: updatedUser.role, isApproved: Boolean(updatedUser.isApproved) }, JWT_SECRET);
+    try {
+      const database = getDb(req);
+      const currentUser = database.prepare('SELECT id, isApproved FROM users WHERE id = ?').get(req.user.id) as any;
+      if (!currentUser || !currentUser.isApproved) {
+        return res.status(403).json({ error: 'Account not approved' });
+      }
+
+      const duplicate = database.prepare('SELECT id FROM users WHERE LOWER(email) = ? AND id != ?').get(normalizedEmail, req.user.id);
+      if (duplicate) {
+        return res.status(400).json({ error: 'Email already exists' });
+      }
+
+      database.prepare('UPDATE users SET name = ?, email = ? WHERE id = ?').run(trimmedName, normalizedEmail, req.user.id);
+      database.prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(trimmedName, req.user.id);
+
+      const updatedUser = database.prepare(`${USER_SUMMARY_SELECT} WHERE u.id = ?`).get(req.user.id) as any;
+      const isDemo = Boolean(req.user?.isDemo);
+      const token = jwt.sign(
+        { id: updatedUser.id, email: updatedUser.email, name: updatedUser.name, role: updatedUser.role, isApproved: Boolean(updatedUser.isApproved), ...(isDemo ? { isDemo: true } : {}) },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
       
-      res.json({ success: true, user: { ...updatedUser, isApproved: Boolean(updatedUser.isApproved) }, token });
+      emitToScope(req, 'users_updated');
+      res.json({ success: true, user: { ...formatUserRow(updatedUser), isDemo }, token });
     } catch (error: any) {
       if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
         res.status(400).json({ error: 'Email already exists' });
@@ -411,8 +653,21 @@ async function startServer() {
 
   // User: Change Password
   app.put('/api/users/me/password', authenticateToken, (req: any, res) => {
+    if (req.user?.isDemo) {
+      return res.status(403).json({ error: 'Password changes are disabled in demo mode' });
+    }
     const { currentPassword, newPassword } = req.body;
-    const user = getDb(req).prepare('SELECT password FROM users WHERE id = ?').get(req.user.id) as any;
+    if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+    if (newPassword.length < 6 || newPassword.length > 128) {
+      return res.status(400).json({ error: 'New password must be between 6 and 128 characters' });
+    }
+
+    const user = getDb(req).prepare('SELECT password, isDummy FROM users WHERE id = ?').get(req.user.id) as any;
+    if (!user || user.isDummy || !user.password) {
+      return res.status(404).json({ error: 'User account not found' });
+    }
     
     if (!bcrypt.compareSync(currentPassword, user.password)) {
       return res.status(400).json({ error: 'Incorrect current password' });
@@ -425,25 +680,7 @@ async function startServer() {
 
   // Admin: Users Management
   app.get('/api/admin/users', authenticateToken, requireAdminOrModerator, (req, res) => {
-    const users = getDb(req).prepare(`
-      SELECT 
-        u.id, 
-        u.email, 
-        u.name, 
-        u.role, 
-        u.isApproved, 
-        u.approval_email_sent,
-        u.last_login_at,
-        u.isDummy,
-        u.notes,
-        (
-          SELECT MAX(COALESCE(a.updatedAt, a.createdAt)) 
-          FROM allocations a 
-          WHERE a.instructorId = u.id OR (a.instructorId IS NULL AND a.instructorName = u.name)
-        ) AS last_allocation_at
-      FROM users u 
-      ORDER BY u.name ASC
-    `).all() as any[];
+    const users = getDb(req).prepare(`${USER_SUMMARY_SELECT} ORDER BY u.name ASC`).all() as any[];
     
     const now = Date.now();
     const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -463,61 +700,27 @@ async function startServer() {
 
     const statsMap = new Map(stats.map(s => [s.userId, { hour: s.countHour || 0, day: s.countDay || 0, month: s.countMonth || 0 }]));
 
-    res.json(users.map(u => {
-      const uStats = statsMap.get(u.id) || { hour: 0, day: 0, month: 0 };
-      const lastAllocIso = u.last_allocation_at ? new Date(u.last_allocation_at).toISOString() : null;
-      return { 
-        ...u, 
-        isApproved: Boolean(u.isApproved),
-        approval_email_sent: Boolean(u.approval_email_sent),
-        isDummy: Boolean(u.isDummy),
-        notes: u.notes || null,
-        lastLoginAt: u.last_login_at || null,
-        lastAllocationAt: lastAllocIso,
-        last_login_at: u.last_login_at || null,
-        last_allocation_at: lastAllocIso,
-        apiStats: uStats
-      };
-    }));
+    res.json(users.map(u => ({
+      ...formatUserRow(u),
+      apiStats: statsMap.get(u.id) || { hour: 0, day: 0, month: 0 }
+    })));
   });
 
-  // Users route returning list with last login and last allocation timestamps
+  // Users route returning list (restricted fields for non-admin/mod users)
   app.get('/api/users', authenticateToken, (req: any, res) => {
-    const users = getDb(req).prepare(`
-      SELECT 
-        u.id, 
-        u.email, 
-        u.name, 
-        u.role, 
-        u.isApproved, 
-        u.approval_email_sent,
-        u.last_login_at,
-        u.isDummy,
-        u.notes,
-        (
-          SELECT MAX(COALESCE(a.updatedAt, a.createdAt)) 
-          FROM allocations a 
-          WHERE a.instructorId = u.id OR (a.instructorId IS NULL AND a.instructorName = u.name)
-        ) AS last_allocation_at
-      FROM users u 
-      ORDER BY u.name ASC
-    `).all() as any[];
+    const users = getDb(req).prepare(`${USER_SUMMARY_SELECT} ORDER BY u.name ASC`).all() as any[];
+    const canViewDetails = req.user?.role === 'admin' || req.user?.role === 'moderator';
 
     res.json(users.map(u => {
-      const lastAllocIso = u.last_allocation_at ? new Date(u.last_allocation_at).toISOString() : null;
+      if (canViewDetails) {
+        return formatUserRow(u);
+      }
       return {
         id: u.id,
-        email: u.email,
         name: u.name,
         role: u.role,
         isApproved: Boolean(u.isApproved),
-        approval_email_sent: Boolean(u.approval_email_sent),
-        isDummy: Boolean(u.isDummy),
-        notes: u.notes || null,
-        lastLoginAt: u.last_login_at || null,
-        lastAllocationAt: lastAllocIso,
-        last_login_at: u.last_login_at || null,
-        last_allocation_at: lastAllocIso
+        isDummy: Boolean(u.isDummy)
       };
     }));
   });
@@ -543,7 +746,7 @@ async function startServer() {
       `);
       stmt.run(id, userProfileEmail, '', trimmedName, userProfileRole);
 
-      io.emit('users_updated');
+      emitToScope(req, 'users_updated');
       res.status(201).json({
         success: true,
         user: {
@@ -573,58 +776,66 @@ async function startServer() {
   app.put('/api/admin/users/:id', authenticateToken, requireAdminOrModerator, async (req: any, res) => {
     const { name, email, role, isApproved, notes } = req.body;
     try {
-      const targetUser = getDb(req).prepare('SELECT id, email, name, role, isApproved, approval_email_sent, isDummy, notes FROM users WHERE id = ?').get(req.params.id) as any;
+      const database = getDb(req);
+      const targetUser = database.prepare('SELECT id, email, name, role, isApproved, approval_email_sent, isDummy, notes FROM users WHERE id = ?').get(req.params.id) as any;
       if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+      const cleanName = typeof name === 'string' && name.trim() ? name.trim() : targetUser.name;
+      const cleanEmail = typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : targetUser.email;
+      const cleanNotes = notes !== undefined ? (notes ? String(notes).trim() : null) : targetUser.notes;
 
       if (req.user.role === 'moderator') {
         if (!targetUser.isDummy && (targetUser.role === 'admin' || targetUser.role === 'moderator')) {
           return res.status(403).json({ error: 'Moderators cannot modify admins or other moderators' });
         }
         if (targetUser.isDummy) {
-          // User profiles can only be instructor or driver_manager
           const allowedProfileRole = (role === 'driver_manager' || role === 'instructor') ? role : targetUser.role;
-          getDb(req).prepare('UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?')
-            .run(name || targetUser.name, email || targetUser.email, allowedProfileRole, req.params.id);
+          database.prepare('UPDATE users SET name = ?, email = ?, role = ?, notes = ? WHERE id = ?')
+            .run(cleanName, cleanEmail, allowedProfileRole, cleanNotes, req.params.id);
 
-          if (name && name !== targetUser.name) {
-            getDb(req).prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(name, req.params.id);
+          if (cleanName !== targetUser.name) {
+            database.prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(cleanName, req.params.id);
           }
         } else {
-          getDb(req).prepare('UPDATE users SET isApproved = ? WHERE id = ?')
+          database.prepare('UPDATE users SET isApproved = ? WHERE id = ?')
             .run(isApproved ? 1 : 0, req.params.id);
         }
       } else {
         // Admin
         const allowedRoles = ['admin', 'moderator', 'instructor', 'driver_manager'];
-        const finalRole = allowedRoles.includes(role) ? role : targetUser.role;
+        let finalRole = allowedRoles.includes(role) ? role : targetUser.role;
+        let finalApproved = isApproved ? 1 : 0;
 
-        getDb(req).prepare('UPDATE users SET name = ?, email = ?, role = ?, isApproved = ? WHERE id = ?')
-          .run(name, email, finalRole, isApproved ? 1 : 0, req.params.id);
+        if (targetUser.id === req.user.id) {
+          finalRole = targetUser.role;
+          finalApproved = 1;
+        }
 
-        if (name && name !== targetUser.name) {
-          getDb(req).prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(name, req.params.id);
+        database.prepare('UPDATE users SET name = ?, email = ?, role = ?, isApproved = ?, notes = ? WHERE id = ?')
+          .run(cleanName, cleanEmail, finalRole, finalApproved, cleanNotes, req.params.id);
+
+        if (cleanName !== targetUser.name) {
+          database.prepare('UPDATE allocations SET instructorName = ? WHERE instructorId = ?').run(cleanName, req.params.id);
         }
       }
 
-      // First-time approval notification with strict idempotency (never send multiple emails)
       const willBeApproved = Boolean(isApproved);
       const alreadyNotified = Boolean(targetUser.approval_email_sent);
 
-      if (willBeApproved && !alreadyNotified) {
-        // Mark as sent immediately to prevent double clicks / rapid toggles from sending multiple emails
-        getDb(req).prepare('UPDATE users SET approval_email_sent = 1 WHERE id = ?').run(req.params.id);
+      if (willBeApproved && !alreadyNotified && !targetUser.isDummy) {
+        database.prepare('UPDATE users SET approval_email_sent = 1 WHERE id = ?').run(req.params.id);
 
         const baseUrl = getClientBaseUrl(req);
         sendInstructorApprovedEmail({
-          to: email || targetUser.email,
-          name: name || targetUser.name,
+          to: cleanEmail,
+          name: cleanName,
           baseUrl,
         }).catch((err) => {
           console.error('[Approval Notification] Delivery error:', err);
         });
       }
 
-      io.emit('users_updated');
+      emitToScope(req, 'users_updated');
       res.json({ success: true });
     } catch (e: any) {
       res.status(400).json({ error: 'Update failed. Email might be in use.' });
@@ -634,16 +845,15 @@ async function startServer() {
   // Admin & Moderator: Bulk approve pending users
   app.post('/api/admin/users/bulk-approve', authenticateToken, requireAdminOrModerator, async (req: any, res) => {
     try {
+      const database = getDb(req);
       let pendingUsers: any[] = [];
       if (req.user.role === 'moderator') {
-        // Moderators can approve instructor and driver manager accounts.
-        pendingUsers = getDb(req).prepare(
-          "SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE (isApproved = 0 OR isApproved IS NULL) AND role IN ('instructor', 'driver_manager')"
+        pendingUsers = database.prepare(
+          "SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE (isApproved = 0 OR isApproved IS NULL) AND (isDummy = 0 OR isDummy IS NULL) AND role IN ('instructor', 'driver_manager')"
         ).all() as any[];
       } else {
-        // Admins can approve all pending accounts
-        pendingUsers = getDb(req).prepare(
-          "SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE (isApproved = 0 OR isApproved IS NULL)"
+        pendingUsers = database.prepare(
+          "SELECT id, email, name, role, isApproved, approval_email_sent FROM users WHERE (isApproved = 0 OR isApproved IS NULL) AND (isDummy = 0 OR isDummy IS NULL)"
         ).all() as any[];
       }
 
@@ -651,10 +861,10 @@ async function startServer() {
         return res.json({ success: true, count: 0, message: 'No pending users found to approve.' });
       }
 
-      const updateStmt = getDb(req).prepare('UPDATE users SET isApproved = 1 WHERE id = ?');
-      const markEmailStmt = getDb(req).prepare('UPDATE users SET approval_email_sent = 1 WHERE id = ?');
+      const updateStmt = database.prepare('UPDATE users SET isApproved = 1 WHERE id = ?');
+      const markEmailStmt = database.prepare('UPDATE users SET approval_email_sent = 1 WHERE id = ?');
 
-      const runBulkUpdate = getDb(req).transaction((usersToApprove: any[]) => {
+      const runBulkUpdate = database.transaction((usersToApprove: any[]) => {
         for (const u of usersToApprove) {
           updateStmt.run(u.id);
           if (!u.approval_email_sent) {
@@ -664,7 +874,6 @@ async function startServer() {
       });
       runBulkUpdate(pendingUsers);
 
-      // Trigger approval notifications asynchronously with idempotency
       const baseUrl = getClientBaseUrl(req);
       for (const u of pendingUsers) {
         if (!u.approval_email_sent) {
@@ -678,7 +887,7 @@ async function startServer() {
         }
       }
 
-      io.emit('users_updated');
+      emitToScope(req, 'users_updated');
       res.json({ success: true, count: pendingUsers.length });
     } catch (err: any) {
       console.error('[Bulk Approve Error]:', err);
@@ -688,6 +897,13 @@ async function startServer() {
 
   app.put('/api/admin/users/:id/password', authenticateToken, requireAdmin, (req, res) => {
     const { password } = req.body;
+    if (typeof password !== 'string' || password.length < 6 || password.length > 128) {
+      return res.status(400).json({ error: 'Password must be between 6 and 128 characters' });
+    }
+    const targetUser = getDb(req).prepare('SELECT id, isDummy FROM users WHERE id = ?').get(req.params.id) as any;
+    if (!targetUser || targetUser.isDummy) {
+      return res.status(404).json({ error: 'User account not found' });
+    }
     const hashedPassword = bcrypt.hashSync(password, 10);
     getDb(req).prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, req.params.id);
     res.json({ success: true });
@@ -695,16 +911,19 @@ async function startServer() {
 
   // Admin: Generate Reset Token
   app.post('/api/admin/users/:id/reset-token', authenticateToken, requireAdmin, (req, res) => {
-    const targetUser = getDb(req).prepare('SELECT id FROM users WHERE id = ?').get(req.params.id) as any;
-    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+    const targetUser = getDb(req).prepare('SELECT id, password, isDummy FROM users WHERE id = ?').get(req.params.id) as any;
+    if (!targetUser || targetUser.isDummy) return res.status(404).json({ error: 'User not found' });
     
-    // Create a 24-hour token for password reset
-    const resetToken = jwt.sign({ purpose: 'reset-password', userId: targetUser.id }, JWT_SECRET, { expiresIn: '24h' });
+    const resetToken = jwt.sign(
+      { purpose: 'reset-password', userId: targetUser.id, pwv: passwordFingerprint(targetUser.password) },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
     res.json({ token: resetToken });
   });
 
   // Public: Self-service request for password recovery link via email
-  app.post('/api/auth/forgot-password', async (req, res) => {
+  app.post('/api/auth/forgot-password', passwordResetLimiter, async (req, res) => {
     const { email } = req.body;
     if (!email || typeof email !== 'string') {
       return res.status(400).json({ error: 'Please enter a valid email address' });
@@ -712,14 +931,13 @@ async function startServer() {
 
     const normalizedEmail = email.trim().toLowerCase();
     try {
-      const user = getDb(req).prepare('SELECT id, email, name FROM users WHERE LOWER(email) = ?').get(normalizedEmail) as any;
+      const user = getDb(req).prepare('SELECT id, email, name, password, isDummy FROM users WHERE LOWER(email) = ? AND (isDummy = 0 OR isDummy IS NULL)').get(normalizedEmail) as any;
 
       let devResetUrl: string | undefined;
 
       if (user) {
-        // Create a 1-hour secure reset token
         const resetToken = jwt.sign(
-          { purpose: 'reset-password', userId: user.id },
+          { purpose: 'reset-password', userId: user.id, pwv: passwordFingerprint(user.password) },
           JWT_SECRET,
           { expiresIn: '1h' }
         );
@@ -733,19 +951,18 @@ async function startServer() {
           resetUrl,
         });
 
-        if (result.devResetUrl) {
+        if (result.devResetUrl && process.env.NODE_ENV !== 'production' && !isSmtpConfigured()) {
           devResetUrl = result.devResetUrl;
         }
       } else {
         console.log(`[Forgot Password] Requested for unrecognized email: ${normalizedEmail}`);
       }
 
-      // Always return a consistent success message for privacy/security
       res.json({
         success: true,
         message: 'If an account exists with that email address, a password reset link has been dispatched.',
-        devResetUrl,
-        isDev: !isSmtpConfigured(),
+        ...(devResetUrl ? { devResetUrl } : {}),
+        isDev: !isSmtpConfigured() && process.env.NODE_ENV !== 'production',
       });
     } catch (err: any) {
       console.error('[Forgot Password Error]:', err);
@@ -754,25 +971,46 @@ async function startServer() {
   });
 
   // Public: Reset password with token
-  app.post('/api/auth/reset-password', (req, res) => {
+  app.post('/api/auth/reset-password', passwordResetLimiter, (req, res) => {
     const { token, newPassword } = req.body;
+    if (typeof token !== 'string' || !token.trim()) {
+      return res.status(400).json({ error: 'Reset token is required' });
+    }
+    if (typeof newPassword !== 'string' || newPassword.length < 6 || newPassword.length > 128) {
+      return res.status(400).json({ error: 'Password must be between 6 and 128 characters' });
+    }
+
     try {
       const decoded = jwt.verify(token, JWT_SECRET) as any;
       if (decoded.purpose !== 'reset-password' || !decoded.userId) {
         return res.status(400).json({ error: 'Invalid token payload' });
       }
 
+      const database = getDb(req);
+      const targetUser = database.prepare('SELECT id, password, isDummy FROM users WHERE id = ?').get(decoded.userId) as any;
+      if (!targetUser || targetUser.isDummy) {
+        return res.status(400).json({ error: 'Invalid or expired reset token' });
+      }
+      if (decoded.pwv && decoded.pwv !== passwordFingerprint(targetUser.password)) {
+        return res.status(400).json({ error: 'Reset token has already been used or expired' });
+      }
+
       const hashedPassword = bcrypt.hashSync(newPassword, 10);
-      getDb(req).prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, decoded.userId);
+      database.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, decoded.userId);
       res.json({ success: true });
-    } catch (err) {
+    } catch {
       return res.status(400).json({ error: 'Invalid or expired reset token' });
     }
   });
 
   app.delete('/api/admin/users/:id', authenticateToken, requireAdminOrModerator, (req: any, res) => {
     try {
-      const targetUser = getDb(req).prepare('SELECT id, isDummy, role, email FROM users WHERE id = ?').get(req.params.id) as any;
+      if (req.params.id === req.user.id) {
+        return res.status(400).json({ error: 'You cannot delete your own account' });
+      }
+
+      const database = getDb(req);
+      const targetUser = database.prepare('SELECT id, isDummy, role, email FROM users WHERE id = ?').get(req.params.id) as any;
       if (!targetUser) return res.status(404).json({ error: 'User not found' });
 
       const isProfile = Boolean(targetUser.isDummy) || (targetUser.email && targetUser.email.includes('@external.placeholder'));
@@ -781,10 +1019,10 @@ async function startServer() {
         return res.status(403).json({ error: 'Moderators can only delete user profiles' });
       }
 
-      getDb(req).prepare('UPDATE allocations SET instructorId = NULL WHERE instructorId = ?').run(req.params.id);
-      getDb(req).prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-      io.emit('allocations_updated');
-      io.emit('users_updated');
+      database.prepare('UPDATE allocations SET instructorId = NULL WHERE instructorId = ?').run(req.params.id);
+      database.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+      emitToScope(req, 'allocations_updated');
+      emitToScope(req, 'users_updated');
       res.json({ success: true });
     } catch (err: any) {
       console.error('Error deleting user:', err);
@@ -804,56 +1042,64 @@ async function startServer() {
     } else {
       allocations = getDb(req).prepare('SELECT * FROM allocations ORDER BY date ASC, createdAt ASC').all() as any[];
     }
-    
-    const collapseConsecutiveHeadcodes = (list: any): string[] => {
-      if (!Array.isArray(list)) return [];
-      const result: string[] = [];
-      for (const raw of list) {
-        const hc = String(raw ?? '').trim().toUpperCase();
-        if (hc && result[result.length - 1] !== hc) {
-          result.push(hc);
-        }
-      }
-      return result;
-    };
 
-    const parsed = allocations.map(a => ({
-      ...a,
-      isFullJob: Boolean(a.isFullJob),
-      headcodes: collapseConsecutiveHeadcodes(JSON.parse(a.headcodes || '[]'))
-    }));
-    
-    res.json(parsed);
+    res.json(allocations.map(parseAllocationRow));
   });
 
   // Allocations: Get all for current user
   app.get('/api/allocations/me', authenticateToken, (req: any, res) => {
     const allocations = getDb(req).prepare('SELECT * FROM allocations WHERE instructorId = ? ORDER BY date ASC, createdAt ASC').all(req.user.id) as any[];
-    
-    const parsed = allocations.map(a => {
-      const rawList = JSON.parse(a.headcodes || '[]');
-      const collapsed: string[] = [];
-      if (Array.isArray(rawList)) {
-        for (const raw of rawList) {
-          const hc = String(raw ?? '').trim().toUpperCase();
-          if (hc && collapsed[collapsed.length - 1] !== hc) {
-            collapsed.push(hc);
-          }
-        }
-      }
-      return {
-        ...a,
-        isFullJob: Boolean(a.isFullJob),
-        headcodes: collapsed
-      };
-    });
-    
-    res.json(parsed);
+    res.json(allocations.map(parseAllocationRow));
   });
+
+  const findAllocationConflict = (
+    database: any,
+    date: string,
+    jobNumber: string,
+    fullJob: boolean,
+    headcodes: string[],
+    excludeId?: string
+  ): string | null => {
+    const existingRows = database.prepare('SELECT * FROM allocations WHERE date = ?').all(date) as any[];
+    const upperJob = jobNumber.toUpperCase();
+    for (const row of existingRows) {
+      if (excludeId && row.id === excludeId) continue;
+      if (String(row.jobNumber || '').trim().toUpperCase() !== upperJob) continue;
+      if (row.isFullJob) {
+        return `${row.instructorName} has already claimed the full job ${upperJob}.`;
+      }
+      if (fullJob) {
+        return `${row.instructorName} has already claimed parts of job ${upperJob}. You cannot claim the full job.`;
+      }
+      const existingHeadcodes = parseAllocationRow(row).headcodes;
+      const overlapping = headcodes.filter(hc => existingHeadcodes.includes(hc));
+      if (overlapping.length > 0) {
+        return `${row.instructorName} has already claimed headcode(s) ${overlapping.join(', ')} for job ${upperJob}.`;
+      }
+    }
+    return null;
+  };
 
   // Allocations: Create
   app.post('/api/allocations', authenticateToken, (req: any, res) => {
     const { date, jobNumber, isFullJob, headcodes, notes, instructorId } = req.body;
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+      return res.status(400).json({ error: 'Valid allocation date (YYYY-MM-DD) is required' });
+    }
+    if (typeof jobNumber !== 'string' || !/^[A-Za-z0-9]{2,12}$/.test(jobNumber.trim())) {
+      return res.status(400).json({ error: 'Valid job number is required' });
+    }
+
+    const cleanDate = date.trim();
+    const cleanJob = jobNumber.trim().toUpperCase();
+    const fullJob = Boolean(isFullJob);
+    const cleanHeadcodes = fullJob ? [] : collapseConsecutiveHeadcodes(headcodes);
+    if (!fullJob && cleanHeadcodes.length === 0) {
+      return res.status(400).json({ error: 'At least one headcode is required for a partial job' });
+    }
+    const cleanNotes = typeof notes === 'string' ? notes.trim().slice(0, 2000) : '';
+
+    const database = getDb(req);
     const id = uuidv4();
     const now = Date.now();
     
@@ -861,30 +1107,44 @@ async function startServer() {
     let finalInstructorName = req.user.name;
 
     if ((req.user.role === 'admin' || req.user.role === 'moderator') && instructorId && instructorId !== req.user.id) {
-      const targetUser = getDb(req).prepare('SELECT id, name FROM users WHERE id = ?').get(instructorId) as any;
-      if (targetUser) {
-        finalInstructorId = targetUser.id;
-        finalInstructorName = targetUser.name;
+      const targetUser = database.prepare('SELECT id, name FROM users WHERE id = ?').get(instructorId) as any;
+      if (!targetUser) {
+        return res.status(400).json({ error: 'Selected user not found' });
       }
+      finalInstructorId = targetUser.id;
+      finalInstructorName = targetUser.name;
     }
 
-    const stmt = getDb(req).prepare(`
-      INSERT INTO allocations (id, date, instructorId, instructorName, jobNumber, isFullJob, headcodes, notes, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    stmt.run(
-      id, date, finalInstructorId, finalInstructorName, jobNumber, 
-      isFullJob ? 1 : 0, JSON.stringify(headcodes || []), notes || '', now
-    );
+    const createTx = database.transaction(() => {
+      const conflictMsg = findAllocationConflict(database, cleanDate, cleanJob, fullJob, cleanHeadcodes);
+      if (conflictMsg) {
+        return { conflict: conflictMsg };
+      }
+      database.prepare(`
+        INSERT INTO allocations (id, date, instructorId, instructorName, jobNumber, isFullJob, headcodes, notes, createdAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, cleanDate, finalInstructorId, finalInstructorName, cleanJob, fullJob ? 1 : 0, JSON.stringify(cleanHeadcodes), cleanNotes, now);
+      return { conflict: null };
+    });
+
+    const outcome = createTx();
+    if (outcome.conflict) {
+      return res.status(409).json({ error: outcome.conflict });
+    }
     
     const newAlloc = {
-      id, date, instructorId: finalInstructorId, instructorName: finalInstructorName,
-      jobNumber, isFullJob, headcodes: headcodes || [], notes: notes || '',
+      id,
+      date: cleanDate,
+      instructorId: finalInstructorId,
+      instructorName: finalInstructorName,
+      jobNumber: cleanJob,
+      isFullJob: fullJob,
+      headcodes: cleanHeadcodes,
+      notes: cleanNotes,
       createdAt: now
     };
     
-    io.to((req && req.user && req.user.isDemo) ? 'demo' : 'real').emit('allocation_added', newAlloc);
+    emitToScope(req, 'allocation_added', newAlloc);
     res.json(newAlloc);
   });
 
@@ -893,49 +1153,77 @@ async function startServer() {
     const { id } = req.params;
     const { jobNumber, isFullJob, headcodes, notes, instructorId } = req.body;
     const now = Date.now();
+    const database = getDb(req);
     
-    const existing = getDb(req).prepare('SELECT instructorId, instructorName FROM allocations WHERE id = ?').get(id) as any;
+    const existing = database.prepare('SELECT * FROM allocations WHERE id = ?').get(id) as any;
     if (!existing) return res.status(404).json({ error: 'Not found' });
-    if (existing.instructorId !== req.user.id && req.user.role !== 'admin' && req.user.role !== 'moderator') return res.status(401).json({ error: 'Forbidden' });
+    if (existing.instructorId !== req.user.id && req.user.role !== 'admin' && req.user.role !== 'moderator') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    if (typeof jobNumber !== 'string' || !/^[A-Za-z0-9]{2,12}$/.test(jobNumber.trim())) {
+      return res.status(400).json({ error: 'Valid job number is required' });
+    }
+
+    const cleanJob = jobNumber.trim().toUpperCase();
+    const fullJob = Boolean(isFullJob);
+    const cleanHeadcodes = fullJob ? [] : collapseConsecutiveHeadcodes(headcodes);
+    if (!fullJob && cleanHeadcodes.length === 0) {
+      return res.status(400).json({ error: 'At least one headcode is required for a partial job' });
+    }
+    const cleanNotes = typeof notes === 'string' ? notes.trim().slice(0, 2000) : '';
 
     let finalInstructorId = existing.instructorId;
     let finalInstructorName = existing.instructorName;
 
     if ((req.user.role === 'admin' || req.user.role === 'moderator') && instructorId && instructorId !== existing.instructorId) {
-      const newUser = getDb(req).prepare('SELECT id, name FROM users WHERE id = ?').get(instructorId) as any;
-      if (newUser) {
-        finalInstructorId = newUser.id;
-        finalInstructorName = newUser.name;
+      const newUser = database.prepare('SELECT id, name FROM users WHERE id = ?').get(instructorId) as any;
+      if (!newUser) {
+        return res.status(400).json({ error: 'Selected user not found' });
       }
+      finalInstructorId = newUser.id;
+      finalInstructorName = newUser.name;
     }
 
-    const stmt = getDb(req).prepare(`
-      UPDATE allocations 
-      SET jobNumber = ?, isFullJob = ?, headcodes = ?, notes = ?, updatedAt = ?, instructorId = ?, instructorName = ?
-      WHERE id = ?
-    `);
+    const updateTx = database.transaction(() => {
+      const conflictMsg = findAllocationConflict(database, existing.date, cleanJob, fullJob, cleanHeadcodes, id);
+      if (conflictMsg) {
+        return { conflict: conflictMsg };
+      }
+      database.prepare(`
+        UPDATE allocations 
+        SET jobNumber = ?, isFullJob = ?, headcodes = ?, notes = ?, updatedAt = ?, instructorId = ?, instructorName = ?
+        WHERE id = ?
+      `).run(cleanJob, fullJob ? 1 : 0, JSON.stringify(cleanHeadcodes), cleanNotes, now, finalInstructorId, finalInstructorName, id);
+      return { conflict: null };
+    });
+
+    const outcome = updateTx();
+    if (outcome.conflict) {
+      return res.status(409).json({ error: outcome.conflict });
+    }
     
-    stmt.run(jobNumber, isFullJob ? 1 : 0, JSON.stringify(headcodes || []), notes || '', now, finalInstructorId, finalInstructorName, id);
+    const updatedRow = database.prepare('SELECT * FROM allocations WHERE id = ?').get(id) as any;
+    const updatedAlloc = parseAllocationRow(updatedRow);
     
-    const updatedAlloc = getDb(req).prepare('SELECT * FROM allocations WHERE id = ?').get(id) as any;
-    updatedAlloc.isFullJob = Boolean(updatedAlloc.isFullJob);
-    updatedAlloc.headcodes = JSON.parse(updatedAlloc.headcodes);
-    
-    io.to((req && req.user && req.user.isDemo) ? 'demo' : 'real').emit('allocation_updated', updatedAlloc);
+    emitToScope(req, 'allocation_updated', updatedAlloc);
     res.json(updatedAlloc);
   });
 
   // Allocations: Delete
   app.delete('/api/allocations/:id', authenticateToken, (req: any, res) => {
     const { id } = req.params;
+    const database = getDb(req);
     
-    const existing = getDb(req).prepare('SELECT instructorId FROM allocations WHERE id = ?').get(id) as any;
+    const existing = database.prepare('SELECT instructorId FROM allocations WHERE id = ?').get(id) as any;
     if (!existing) return res.status(404).json({ error: 'Not found' });
-    if (existing.instructorId !== req.user.id && req.user.role !== 'admin' && req.user.role !== 'moderator') return res.status(401).json({ error: 'Forbidden' });
+    if (existing.instructorId !== req.user.id && req.user.role !== 'admin' && req.user.role !== 'moderator') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
 
-    getDb(req).prepare('DELETE FROM allocations WHERE id = ?').run(id);
+    database.prepare('DELETE FROM allocations WHERE id = ?').run(id);
     
-    io.to((req && req.user && req.user.isDemo) ? 'demo' : 'real').emit('allocation_deleted', { id });
+    emitToScope(req, 'allocation_deleted', { id });
     res.json({ success: true });
   });
 
@@ -991,7 +1279,7 @@ async function startServer() {
   };
 
   // Diagrams API: serve diagrams from daily cache, TDtools API (once per day), or fallback data directory
-  app.get("/api/diagrams", async (req, res) => {
+  app.get("/api/diagrams", authenticateToken, async (req: any, res) => {
     // Prevent any browser or proxy caching
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     res.setHeader('Pragma', 'no-cache');
@@ -1001,32 +1289,24 @@ async function startServer() {
       const { url: externalApiUrl, token: apiToken } = getTDToolsConfig(req);
       const normalizedApiUrl = externalApiUrl || '';
       const todayLondon = getLondonTimeIso().substring(0, 10);
-
-      // Only allow admins/moderators to force-bypass the daily cache via ?refresh=1
-      let canForceRefresh = false;
-      if (req.query.refresh === '1') {
-        const authHeader = req.headers['authorization'];
-        const bearerToken = authHeader && authHeader.split(' ')[1];
-        if (bearerToken) {
-          try {
-            const decoded: any = jwt.verify(bearerToken, JWT_SECRET);
-            if (decoded && !decoded.isDemo && (decoded.role === 'admin' || decoded.role === 'moderator')) {
-              canForceRefresh = true;
-            }
-          } catch {}
-        }
-      }
+      const isRealAdminOrMod = !req.user?.isDemo && (req.user?.role === 'admin' || req.user?.role === 'moderator');
+      const canForceRefresh = req.query.refresh === '1' && isRealAdminOrMod;
+      const sanitizeCatalogForCaller = (payload: any) => {
+        if (!payload || isRealAdminOrMod) return payload;
+        const { dbErrors: _omitted, ...safePayload } = payload;
+        return safePayload;
+      };
 
       if (canForceRefresh) {
         clearDriverInfoCache();
       } else {
         if (diagramCatalogCache && diagramCatalogCache.cacheDate === todayLondon && diagramCatalogCache.apiUrl === normalizedApiUrl) {
-          return res.json({
+          return res.json(sanitizeCatalogForCaller({
             ...diagramCatalogCache.payload,
             cached: true,
             cacheDate: diagramCatalogCache.cacheDate,
             cachedAt: diagramCatalogCache.updatedAt
-          });
+          }));
         }
 
         try {
@@ -1041,12 +1321,12 @@ async function startServer() {
               payload: parsedPayload,
               updatedAt: Number(cachedRow.updated_at) || Date.now()
             };
-            return res.json({
+            return res.json(sanitizeCatalogForCaller({
               ...parsedPayload,
               cached: true,
               cacheDate: diagramCatalogCache.cacheDate,
               cachedAt: diagramCatalogCache.updatedAt
-            });
+            }));
           }
         } catch (cacheReadErr) {
           console.warn('Failed to read diagram_catalog_cache from SQLite:', cacheReadErr);
@@ -1055,7 +1335,7 @@ async function startServer() {
         if (diagramCatalogFetchInFlight) {
           const inFlightPayload = await diagramCatalogFetchInFlight;
           if (inFlightPayload) {
-            return res.json(inFlightPayload);
+            return res.json(sanitizeCatalogForCaller(inFlightPayload));
           }
         }
       }
@@ -1096,18 +1376,7 @@ async function startServer() {
                   const sanitized: Record<string, string[]> = {};
                   if (!rawMap || typeof rawMap !== 'object') return sanitized;
                   for (const [k, list] of Object.entries(rawMap)) {
-                    if (!Array.isArray(list)) {
-                      sanitized[k] = [];
-                      continue;
-                    }
-                    const collapsed: string[] = [];
-                    for (const item of list) {
-                      const hc = String(item ?? '').trim().toUpperCase();
-                      if (hc && collapsed[collapsed.length - 1] !== hc) {
-                        collapsed.push(hc);
-                      }
-                    }
-                    sanitized[k] = collapsed;
+                    sanitized[k] = collapseConsecutiveHeadcodes(list);
                   }
                   return sanitized;
                 };
@@ -1166,7 +1435,7 @@ async function startServer() {
         try {
           const tdToolsPayload = await fetchTask;
           if (tdToolsPayload) {
-            return res.json(tdToolsPayload);
+            return res.json(sanitizeCatalogForCaller(tdToolsPayload));
           }
         } finally {
           if (diagramCatalogFetchInFlight === fetchTask) {
@@ -1181,13 +1450,13 @@ async function startServer() {
           ).get() as any;
           if (staleRow && (staleRow.api_url || '') === normalizedApiUrl && staleRow.payload) {
             const parsedStale = JSON.parse(staleRow.payload);
-            return res.json({
+            return res.json(sanitizeCatalogForCaller({
               ...parsedStale,
               cached: true,
               stale: true,
               cacheDate: staleRow.cache_date,
               cachedAt: Number(staleRow.updated_at) || undefined
-            });
+            }));
           }
         } catch {}
       }
@@ -1263,15 +1532,7 @@ async function startServer() {
               cleanStr = cleanStr.substring(1, cleanStr.length - 1).replace(/""/g, '"');
             }
             const hcs = JSON.parse(cleanStr);
-            const collapsedHcs: string[] = [];
-            if (Array.isArray(hcs)) {
-              for (const item of hcs) {
-                const hc = String(item ?? '').trim().toUpperCase();
-                if (hc && collapsedHcs[collapsedHcs.length - 1] !== hc) {
-                  collapsedHcs.push(hc);
-                }
-              }
-            }
+            const collapsedHcs = collapseConsecutiveHeadcodes(hcs);
             if (ltp_id && ltp_id !== 'NULL') hm[`ltp_${ltp_id}`] = collapsedHcs;
             if (stp_id && stp_id !== 'NULL') hm[`stp_${stp_id}`] = collapsedHcs;
           } catch (e) {
@@ -1307,6 +1568,9 @@ async function startServer() {
   app.post('/api/settings/tdtools', authenticateToken, requireRealAdmin, (req: any, res) => {
     try {
       const { url, token } = req.body;
+      if (url !== undefined && String(url).trim() !== '' && !validateExternalUrl(String(url).trim())) {
+        return res.status(400).json({ error: 'Invalid TDtools API URL' });
+      }
       
       const upsert = (database: any) => {
         const stmt = database.prepare(`
@@ -1333,11 +1597,14 @@ async function startServer() {
     try {
       const { url, token, testJob = 'AW1104', saveOnSuccess } = req.body;
       const currentConfig = getTDToolsConfig(req);
-      const targetUrlStr = (url !== undefined ? url : currentConfig.url) || '';
+      const targetUrlStr = String((url !== undefined ? url : currentConfig.url) || '').trim();
       const targetToken = (token !== undefined && token !== '' ? token : currentConfig.token) || '';
 
       if (!targetUrlStr) {
         return res.status(400).json({ success: false, error: 'No TDtools API URL specified' });
+      }
+      if (!validateExternalUrl(targetUrlStr)) {
+        return res.status(400).json({ success: false, error: 'Invalid or disallowed TDtools API URL' });
       }
 
       const authHeaders = targetToken ? { 'Authorization': `Bearer ${targetToken}` } : {};
@@ -1433,19 +1700,6 @@ async function startServer() {
       const jobStr = String(job).trim();
       const dateStr = String(date).trim();
       const { url: externalApiUrl, token: apiToken } = getTDToolsConfig(req);
-
-      // Obfuscate driver name for demo / public preview privacy
-      const obfuscateDriverName = (name: string): string => {
-        if (!name || typeof name !== 'string') return '';
-        return name
-          .trim()
-          .split(/\s+/)
-          .map(part => {
-            if (part.length <= 1) return part;
-            return part[0] + '*'.repeat(Math.max(3, part.length - 1));
-          })
-          .join(' ');
-      };
 
       // 1. If TDtools external API URL is configured, query it first as the authoritative live source
       if (externalApiUrl) {
@@ -1651,20 +1905,37 @@ async function startServer() {
     }
   });
 
-  // Diagram Image Proxy: safely renders diagram images if direct access from browser is restricted
-  app.get('/api/diagrams/image-proxy', authenticateToken, async (req: any, res) => {
+  // Diagram Image Proxy: safely renders diagram images from trusted TDtools hosts only
+  app.get('/api/diagrams/image-proxy', authenticateToken, proxyRateLimiter, async (req: any, res) => {
     try {
       const { pdfname, page, url } = req.query;
-      let targetUrl = url ? String(url) : '';
+      const { url: apiBaseUrl } = getTDToolsConfig(req);
 
-      if (!targetUrl && pdfname && page) {
-        const { url: apiBaseUrl } = getTDToolsConfig(req);
+      const allowedHosts = new Set<string>(['tdtools.co.uk', 'www.tdtools.co.uk']);
+      if (apiBaseUrl) {
+        const parsedApi = validateExternalUrl(apiBaseUrl);
+        if (parsedApi) allowedHosts.add(parsedApi.hostname.toLowerCase());
+      }
+
+      let targetUrl = '';
+      if (url) {
+        const parsedQueryUrl = validateExternalUrl(String(url));
+        if (!parsedQueryUrl) {
+          return res.status(400).send('Invalid image URL');
+        }
+        const host = parsedQueryUrl.hostname.toLowerCase();
+        const isAllowed = allowedHosts.has(host) || host.endsWith('.tdtools.co.uk');
+        if (!isAllowed) {
+          return res.status(403).send('Image host is not permitted');
+        }
+        targetUrl = parsedQueryUrl.toString();
+      } else if (pdfname && page) {
         let rosterBase = 'https://tdtools.co.uk/roster/';
         if (apiBaseUrl) {
-          try {
-            const u = new URL(apiBaseUrl);
-            rosterBase = `${u.protocol}//${u.host}${path.posix.dirname(u.pathname)}/`;
-          } catch (e) {}
+          const parsedApi = validateExternalUrl(apiBaseUrl);
+          if (parsedApi) {
+            rosterBase = `${parsedApi.protocol}//${parsedApi.host}${path.posix.dirname(parsedApi.pathname)}/`;
+          }
         }
         targetUrl = `${rosterBase}diagramimg.php?pdfname=${encodeURIComponent(String(pdfname))}&page=${encodeURIComponent(String(page))}`;
       }
@@ -1676,15 +1947,21 @@ async function startServer() {
       const imgRes = await fetch(targetUrl, {
         headers: {
           'User-Agent': 'TrainDriverInstructorApp/1.0'
-        }
+        },
+        signal: AbortSignal.timeout(10000)
       });
 
       if (!imgRes.ok) {
         return res.status(imgRes.status).send('Failed to fetch diagram image');
       }
 
-      const contentType = imgRes.headers.get('content-type') || 'image/png';
-      res.setHeader('Content-Type', contentType);
+      const rawContentType = (imgRes.headers.get('content-type') || 'image/png').split(';')[0].trim().toLowerCase();
+      if (!rawContentType.startsWith('image/')) {
+        return res.status(502).send('Upstream did not return a valid image');
+      }
+
+      res.setHeader('Content-Type', rawContentType);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'public, max-age=86400');
       const arrayBuf = await imgRes.arrayBuffer();
       res.send(Buffer.from(arrayBuf));
@@ -1809,6 +2086,13 @@ async function startServer() {
   app.post('/api/settings/nre', authenticateToken, requireRealAdmin, (req: any, res) => {
     try {
       const { url, apiKey, arrivalUrl, arrivalApiKey } = req.body;
+      if (url !== undefined && String(url).trim() !== '' && !validateExternalUrl(String(url).trim())) {
+        return res.status(400).json({ error: 'Invalid Departure API URL' });
+      }
+      if (arrivalUrl !== undefined && String(arrivalUrl).trim() !== '' && !validateExternalUrl(String(arrivalUrl).trim())) {
+        return res.status(400).json({ error: 'Invalid Arrival API URL' });
+      }
+
       const stmt = db.prepare(`
         INSERT INTO app_settings (key, value) VALUES (?, ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -1848,6 +2132,13 @@ async function startServer() {
       const targetApiKey = isArrivalTest
         ? (arrivalApiKey !== undefined && String(arrivalApiKey).trim() !== '' ? String(arrivalApiKey).trim() : (apiKey !== undefined && String(apiKey).trim() !== '' ? String(apiKey).trim() : currentConfig.arrivalApiKey))
         : (apiKey !== undefined && String(apiKey).trim() !== '' ? String(apiKey).trim() : currentConfig.apiKey);
+
+      if (!validateExternalUrl(targetUrl)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid or disallowed Rail Data API URL'
+        });
+      }
 
       if (!targetApiKey) {
         return res.status(400).json({
@@ -2396,8 +2687,7 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
           destination,
           destinationTiploc,
           headcode: s.trainid || (s.rsid ? s.rsid.substring(0, 4) : 'N/A'),
-          isPassengerService: s.isPassengerService !== false,
-          raw: s
+          isPassengerService: s.isPassengerService !== false
         };
       });
 
@@ -2497,19 +2787,23 @@ const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
     });
   }
 
-  io.on('connection', (socket) => {
+  io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
-    if (token) {
-      jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (!err && user) {
-          if (user.isDemo) {
-            socket.join('demo');
-          } else {
-            socket.join('real');
-          }
-        }
-      });
+    if (!token || typeof token !== 'string') {
+      return next(new Error('Unauthorized'));
     }
+    jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+      if (err || !user) {
+        return next(new Error('Invalid token'));
+      }
+      socket.data.user = user;
+      socket.data.room = user.isDemo ? 'demo' : 'real';
+      next();
+    });
+  });
+
+  io.on('connection', (socket) => {
+    socket.join(socket.data.room === 'demo' ? 'demo' : 'real');
   });
 
   httpServer.on('error', (err: any) => {

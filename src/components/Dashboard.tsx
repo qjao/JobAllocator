@@ -1,15 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { format, addDays, subDays, isSameDay } from 'date-fns';
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, LogOut, AlertTriangle, Plus, Trash2, CheckCircle2, Train, Pencil, Shield, User as UserIcon, HelpCircle, X, Moon, Sun, Search } from 'lucide-react';
-import { Allocation, Conflict, User } from '../types';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Trash2, CheckCircle2, Pencil } from 'lucide-react';
+import { Allocation, User } from '../types';
 import { cn, getFinancialWeek, getLondonDate } from '../lib/utils';
+import { validateJobNumber, checkAllocationConflicts, getRoleLabel } from '../lib/allocations';
 import { io } from 'socket.io-client';
 
+import Header from './Header';
 import HelpModal from './HelpModal';
 import DiagramSelector from './DiagramSelector';
 import DriverEmailLink from './DriverEmailLink';
 import MiniCalendar from './MiniCalendar';
-import { useRef } from 'react';
 
 interface DashboardProps {
   user: User;
@@ -18,8 +19,6 @@ interface DashboardProps {
   darkMode: boolean;
   toggleDarkMode: () => void;
 }
-
-import Header from './Header';
 
 export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: DashboardProps) {
   const [selectedDate, setSelectedDate] = useState<Date>(getLondonDate());
@@ -49,14 +48,9 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
 
   // Edit state
   const [editingAllocation, setEditingAllocation] = useState<Allocation | null>(null);
-  const [editJobNumber, setEditJobNumber] = useState('');
-  const [editIsFullJob, setEditIsFullJob] = useState(true);
-  const [editHeadcodesInput, setEditHeadcodesInput] = useState('');
-  const [editNotesInput, setEditNotesInput] = useState('');
   const [editInstructorId, setEditInstructorId] = useState('');
   const [editFormError, setEditFormError] = useState('');
   const [editSubmitting, setEditSubmitting] = useState(false);
-  const [showEditNotes, setShowEditNotes] = useState(false);
   const [showOnlyMine, setShowOnlyMine] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [selectedInstructorId, setSelectedInstructorId] = useState(user.id);
@@ -147,101 +141,6 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
     };
   }, [dateStr]);
 
-  const validateJobNumber = (job: string, date: Date): string | null => {
-    if (!/^[A-Za-z]{2}\d{4}$/.test(job)) {
-      return 'Job number must be in format LLXXXX (e.g., AW1101).';
-    }
-
-    const upperJob = job.toUpperCase();
-    const depotCode = upperJob.substring(0, 2);
-    const dayCode = upperJob.charAt(2);
-    const depotNum = upperJob.charAt(3);
-
-    const validDepots: Record<string, string> = {
-      'AW': '1',
-      'GP': '2',
-      'IF': '3',
-      'MH': '4',
-      'OC': '5',
-      'PU': '6',
-      'SH': '7'
-    };
-
-    if (!validDepots[depotCode]) {
-      return `Invalid depot code. Must be one of: ${Object.keys(validDepots).join(', ')}.`;
-    }
-
-    const exceptionSuffixes: Record<string, string[]> = {
-      'GP': ['001'],
-      'IF': ['002']
-    };
-    
-    const isException = exceptionSuffixes[depotCode]?.includes(upperJob.substring(3));
-
-    if (!isException && validDepots[depotCode] !== depotNum) {
-      return `Invalid depot number for ${depotCode}. Expected ${validDepots[depotCode]}, got ${depotNum}.`;
-    }
-
-    const dayOfWeek = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    let expectedDayCodes: string[] = [];
-    let dayType = '';
-    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-      expectedDayCodes = ['1', '4'];
-      dayType = 'weekday';
-    } else if (dayOfWeek === 6) {
-      expectedDayCodes = ['2', '5'];
-      dayType = 'Saturday';
-    } else if (dayOfWeek === 0) {
-      expectedDayCodes = ['3', '6'];
-      dayType = 'Sunday';
-    }
-
-    if (!expectedDayCodes.includes(dayCode)) {
-      return `Invalid day code for a ${dayType}. Expected ${expectedDayCodes.join(' or ')}, got ${dayCode}.`;
-    }
-
-    return null; // Valid
-  };
-  const validateHeadcode = (hc: string) => /^\d[A-Za-z]\d{2}$/.test(hc);
-
-  const checkConflicts = (job: string, fullJob: boolean, headcodes: string[], excludeId?: string): Conflict[] => {
-    const conflicts: Conflict[] = [];
-    const upperJob = job.toUpperCase();
-    
-    allocations.forEach(alloc => {
-      if (excludeId && alloc.id === excludeId) return;
-
-      // Conflict only happens on the same job number
-      if (alloc.jobNumber.toUpperCase() === upperJob) {
-        if (alloc.isFullJob) {
-          conflicts.push({
-            type: 'full_job',
-            message: `${alloc.instructorName} has already claimed the full job ${upperJob}.`,
-            conflictingAllocation: alloc
-          });
-        } else if (fullJob) {
-          conflicts.push({
-            type: 'full_job',
-            message: `${alloc.instructorName} has already claimed parts of job ${upperJob}. You cannot claim the full job.`,
-            conflictingAllocation: alloc
-          });
-        } else {
-          // Both are partial jobs, check for overlapping headcodes
-          const overlapping = headcodes.filter(hc => alloc.headcodes.includes(hc.toUpperCase()));
-          if (overlapping.length > 0) {
-            conflicts.push({
-              type: 'headcode',
-              message: `${alloc.instructorName} has already claimed headcode(s) ${overlapping.join(', ')} for job ${upperJob}.`,
-              conflictingAllocation: alloc
-            });
-          }
-        }
-      }
-    });
-
-    return conflicts;
-  };
-
   const handleAddAllocation = async (job: string, fullJob: boolean, headcodes: string[], notes: string) => {
     setFormError('');
 
@@ -251,7 +150,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
       return;
     }
 
-    const conflicts = checkConflicts(job, fullJob, headcodes);
+    const conflicts = checkAllocationConflicts(allocations, job, fullJob, headcodes);
     if (conflicts.length > 0) {
       setFormError(conflicts[0].message);
       return;
@@ -287,75 +186,8 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
 
   const openEditModal = (alloc: Allocation) => {
     setEditingAllocation(alloc);
-    setEditJobNumber(alloc.jobNumber);
-    setEditIsFullJob(alloc.isFullJob);
-    setEditHeadcodesInput(alloc.headcodes ? alloc.headcodes.join(', ') : '');
-    setEditNotesInput(alloc.notes || '');
     setEditInstructorId(alloc.instructorId);
-    setShowEditNotes(!!alloc.notes);
     setEditFormError('');
-  };
-
-  const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingAllocation) return;
-    setEditFormError('');
-
-    const job = editJobNumber.trim().toUpperCase();
-    const jobError = validateJobNumber(job, selectedDate);
-    if (jobError) {
-      setEditFormError(jobError);
-      return;
-    }
-
-    let parsedHeadcodes: string[] = [];
-    if (!editIsFullJob) {
-      parsedHeadcodes = editHeadcodesInput.split(',').map(h => h.trim().toUpperCase()).filter(h => h);
-      if (parsedHeadcodes.length === 0) {
-        setEditFormError('Please enter at least one headcode for a partial job.');
-        return;
-      }
-      for (const hc of parsedHeadcodes) {
-        if (!validateHeadcode(hc)) {
-          setEditFormError(`Invalid headcode format: ${hc}. Must be XLXX (e.g., 1A23).`);
-          return;
-        }
-      }
-    }
-
-    const conflicts = checkConflicts(job, editIsFullJob, parsedHeadcodes, editingAllocation.id);
-    if (conflicts.length > 0) {
-      setEditFormError(conflicts[0].message);
-      return;
-    }
-
-    setEditSubmitting(true);
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`/api/allocations/${editingAllocation.id}`, {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          jobNumber: job,
-          isFullJob: editIsFullJob,
-          headcodes: editIsFullJob ? [] : parsedHeadcodes,
-          notes: editNotesInput.trim(),
-          instructorId: (user.role === 'admin' || user.role === 'moderator') ? editInstructorId : undefined
-        })
-      });
-
-      if (!res.ok) throw new Error('Failed to update allocation');
-
-      setEditingAllocation(null);
-    } catch (error) {
-      console.error("Error updating allocation:", error);
-      setEditFormError('Unable to update allocation. Please contact an admin.');
-    } finally {
-      setEditSubmitting(false);
-    }
   };
 
   const confirmDelete = async (id: string) => {
@@ -478,14 +310,11 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 text-sm transition-colors"
                   >
                     <option value={user.id}>Myself ({user.name})</option>
-                    {users.filter(u => u.id !== user.id).map(u => {
-                      const roleLabel = u.role === 'driver_manager' ? 'Driver Manager' : u.role === 'moderator' ? 'Moderator' : u.role === 'admin' ? 'Admin' : 'Instructor';
-                      return (
-                        <option key={u.id} value={u.id}>
-                          {u.name} ({roleLabel})
-                        </option>
-                      );
-                    })}
+                    {users.filter(u => u.id !== user.id).map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} ({getRoleLabel(u.role)})
+                      </option>
+                    ))}
                   </select>
                 </div>
               )}
@@ -717,7 +546,7 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
                   
                 } catch (error) {
                   console.error("Error updating allocation:", error);
-                  setEditFormError('Failed to update allocation. Check permissions.');
+                  setEditFormError('Unable to update allocation. Please contact an admin.');
                 } finally {
                   setEditSubmitting(false);
                 }
@@ -742,14 +571,11 @@ export default function Dashboard({ user, onLogout, onNavigate, darkMode, toggle
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900/50 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors"
                     required
                   >
-                    {users.map(u => {
-                      const roleLabel = u.role === 'driver_manager' ? 'Driver Manager' : u.role === 'moderator' ? 'Moderator' : u.role === 'admin' ? 'Admin' : 'Instructor';
-                      return (
-                        <option key={u.id} value={u.id}>
-                          {u.name} {u.id === user.id ? '(You)' : `(${roleLabel})`}
-                        </option>
-                      );
-                    })}
+                    {users.map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.name} {u.id === user.id ? '(You)' : `(${getRoleLabel(u.role)})`}
+                      </option>
+                    ))}
                   </select>
                 </div>
               )}

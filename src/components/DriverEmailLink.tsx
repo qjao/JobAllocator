@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Mail } from 'lucide-react';
+import { obfuscateName } from '../lib/utils';
 
 interface DriverEmailLinkProps {
   jobNumber: string;
@@ -54,7 +55,7 @@ export default function DriverEmailLink({
   const nameParts = resolvedDriverName.trim().split(/\s+/).filter(Boolean);
   if (nameParts.length < 2) return null;
   const recipientNameParts = isDemoMode
-    ? nameParts.map(part => part.length <= 1 ? part : `${part[0]}${'*'.repeat(Math.max(3, part.length - 1))}`)
+    ? obfuscateName(resolvedDriverName).split(/\s+/).filter(Boolean)
     : nameParts;
 
   const normalizeNamePart = (part: string) => part

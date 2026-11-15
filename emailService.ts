@@ -16,6 +16,19 @@ export interface NewUserAlertOptions {
   baseUrl: string;
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function toSingleLine(value: unknown): string {
+  return String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
+}
+
 export function isSmtpConfigured(): boolean {
   return Boolean(process.env.SMTP_HOST && process.env.SMTP_HOST.trim().length > 0);
 }
@@ -56,23 +69,28 @@ function getSenderAddress(): string {
 
 /**
  * Sends a password reset email to the user.
- * If SMTP is not configured, logs the link clearly to stdout and returns devResetUrl.
+ * If SMTP is not configured in non-production, logs the link and returns devResetUrl.
  */
 export async function sendPasswordResetEmail({ to, name, resetUrl }: EmailOptions): Promise<{ delivered: boolean; devResetUrl?: string; error?: string }> {
-  const recipientName = name || 'Instructor';
+  const recipientName = toSingleLine(name) || 'Instructor';
+  const safeNameHtml = escapeHtml(recipientName);
+  const safeResetUrlHtml = escapeHtml(resetUrl);
+  const isProd = process.env.NODE_ENV === 'production';
   const transporter = getTransporter();
 
   if (!transporter) {
     console.log('\n===============================================================');
     console.log(' [DEV / NO SMTP CONFIGURED] Password Reset Link Generated');
     console.log(` To: ${recipientName} <${to}>`);
-    console.log(` Reset URL: ${resetUrl}`);
+    if (!isProd) {
+      console.log(` Reset URL: ${resetUrl}`);
+    }
     console.log(' Configure SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS to send real emails.');
     console.log('===============================================================\n');
 
     return {
       delivered: false,
-      devResetUrl: resetUrl,
+      ...(isProd ? {} : { devResetUrl: resetUrl }),
     };
   }
 
@@ -115,18 +133,18 @@ Instructor Job Allocator Team`;
   <div class="card">
     <span class="badge">Instructor Job Allocator</span>
     <h1>Password Reset Request</h1>
-    <p>Hello <strong>${recipientName}</strong>,</p>
+    <p>Hello <strong>${safeNameHtml}</strong>,</p>
     <p>We received a request to reset your password for your Instructor Job Allocator account. Click the button below to choose a new password:</p>
     
     <div class="button-container">
-      <a href="${resetUrl}" class="button" target="_blank" rel="noopener noreferrer">Reset Password</a>
+      <a href="${safeResetUrlHtml}" class="button" target="_blank" rel="noopener noreferrer">Reset Password</a>
     </div>
 
     <p>This password reset link will expire in <strong>1 hour</strong>. If you did not make this request, you can safely ignore this email; your account remains secure.</p>
     
     <div class="break-word">
       Button not working? Copy and paste this URL into your browser:<br>
-      <a href="${resetUrl}" style="color: #2563eb;">${resetUrl}</a>
+      <a href="${safeResetUrlHtml}" style="color: #2563eb;">${safeResetUrlHtml}</a>
     </div>
 
     <div class="footer">
@@ -148,10 +166,8 @@ Instructor Job Allocator Team`;
     return { delivered: true };
   } catch (error: any) {
     console.error(`[SMTP ERROR] Failed to send password reset email to ${to}:`, error.message);
-    // In dev / non-prod or fallback, still surface resetUrl for easy testing
     return {
       delivered: false,
-      devResetUrl: resetUrl,
       error: error.message,
     };
   }
@@ -163,27 +179,32 @@ Instructor Job Allocator Team`;
 export async function sendNewRegistrationAlert({ adminEmail, newUser, baseUrl }: NewUserAlertOptions): Promise<{ delivered: boolean; error?: string }> {
   const targetAdmin = adminEmail || process.env.ADMIN_EMAIL || 'your@admin.com';
   const transporter = getTransporter();
+  const cleanName = toSingleLine(newUser.name) || 'New Instructor';
+  const cleanEmail = toSingleLine(newUser.email);
 
   if (!transporter) {
     console.log('\n===============================================================');
     console.log(' [DEV / NO SMTP CONFIGURED] New User Registration Alert');
     console.log(` Admin Recipient: ${targetAdmin}`);
-    console.log(` New User: ${newUser.name} (${newUser.email}) - ID: ${newUser.id}`);
+    console.log(` New User: ${cleanName} (${cleanEmail}) - ID: ${newUser.id}`);
     console.log(` Action: Login at ${baseUrl} to review and approve.`);
     console.log('===============================================================\n');
     return { delivered: false };
   }
 
   const from = getSenderAddress();
-  const subject = `[Action Required] New Registration: ${newUser.name} pending approval`;
+  const subject = `[Action Required] New Registration: ${cleanName} pending approval`;
   const adminUrl = `${baseUrl.replace(/\/$/, '')}/`;
+  const safeNameHtml = escapeHtml(cleanName);
+  const safeEmailHtml = escapeHtml(cleanEmail);
+  const safeAdminUrlHtml = escapeHtml(adminUrl);
 
   const textBody = `Hello Administrator,
 
 A new user has registered for Instructor Job Allocator and is pending approval:
 
-Name: ${newUser.name}
-Email: ${newUser.email}
+Name: ${cleanName}
+Email: ${cleanEmail}
 User ID: ${newUser.id}
 Date: ${new Date().toUTCString()}
 
@@ -226,11 +247,11 @@ Instructor Job Allocator System`;
     <table class="table">
       <tr>
         <td class="label">Name</td>
-        <td class="value"><strong>${newUser.name}</strong></td>
+        <td class="value"><strong>${safeNameHtml}</strong></td>
       </tr>
       <tr>
         <td class="label">Email</td>
-        <td class="value"><a href="mailto:${newUser.email}" style="color:#2563eb; text-decoration:none;">${newUser.email}</a></td>
+        <td class="value"><a href="mailto:${safeEmailHtml}" style="color:#2563eb; text-decoration:none;">${safeEmailHtml}</a></td>
       </tr>
       <tr>
         <td class="label">Registered At</td>
@@ -239,7 +260,7 @@ Instructor Job Allocator System`;
     </table>
 
     <div class="button-container">
-      <a href="${adminUrl}" class="button" target="_blank" rel="noopener noreferrer">Open Admin Dashboard</a>
+      <a href="${safeAdminUrlHtml}" class="button" target="_blank" rel="noopener noreferrer">Open Admin Dashboard</a>
     </div>
 
     <div class="footer">
@@ -257,7 +278,7 @@ Instructor Job Allocator System`;
       text: textBody,
       html: htmlBody,
     });
-    console.log(`[SMTP] Admin registration alert sent to ${targetAdmin} for user ${newUser.email}`);
+    console.log(`[SMTP] Admin registration alert sent to ${targetAdmin} for user ${cleanEmail}`);
     return { delivered: true };
   } catch (error: any) {
     console.error(`[SMTP ERROR] Failed to send admin alert to ${targetAdmin}:`, error.message);
@@ -275,9 +296,11 @@ export interface InstructorApprovalAlertOptions {
  * Sends an email notification to the instructor when their account is approved for the first time.
  */
 export async function sendInstructorApprovedEmail({ to, name, baseUrl }: InstructorApprovalAlertOptions): Promise<{ delivered: boolean; error?: string }> {
-  const recipientName = name || 'Instructor';
+  const recipientName = toSingleLine(name) || 'Instructor';
+  const safeNameHtml = escapeHtml(recipientName);
   const transporter = getTransporter();
   const loginUrl = `${baseUrl.replace(/\/$/, '')}/`;
+  const safeLoginUrlHtml = escapeHtml(loginUrl);
 
   if (!transporter) {
     console.log('\n===============================================================');
@@ -325,17 +348,17 @@ Instructor Job Allocator Team`;
   <div class="card">
     <span class="badge">Account Approved</span>
     <h1>Welcome to Instructor Job Allocator</h1>
-    <p>Hello <strong>${recipientName}</strong>,</p>
+    <p>Hello <strong>${safeNameHtml}</strong>,</p>
     <p>Your registration request has been reviewed and approved by an administrator. Your account is now fully active.</p>
     <p>You can sign in now to browse diagrams and book your allocations.</p>
     
     <div class="button-container">
-      <a href="${loginUrl}" class="button" target="_blank" rel="noopener noreferrer">Sign In to Allocator</a>
+      <a href="${safeLoginUrlHtml}" class="button" target="_blank" rel="noopener noreferrer">Sign In to Allocator</a>
     </div>
 
     <div class="break-word">
       Button not working? Copy and paste this URL into your browser:<br>
-      <a href="${loginUrl}" style="color: #059669;">${loginUrl}</a>
+      <a href="${safeLoginUrlHtml}" style="color: #059669;">${safeLoginUrlHtml}</a>
     </div>
 
     <div class="footer">
