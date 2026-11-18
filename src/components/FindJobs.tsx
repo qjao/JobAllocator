@@ -1,6 +1,16 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Train, Shield, AlertTriangle, Navigation, Copy, BarChart3 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import React, { useState, useEffect } from 'react';
+import {
+  Search,
+  Train,
+  Shield,
+  AlertTriangle,
+  Navigation,
+  Copy,
+  Globe,
+  RefreshCw,
+  Trash2,
+  Database,
+} from 'lucide-react';
 import { User } from '../types';
 import { formatDateKey, getLondonDate } from '../lib/utils';
 import Header from './Header';
@@ -16,6 +26,7 @@ interface FindJobsProps {
 
 interface TrainService {
   std: string;
+  arrAtDest?: string;
   date: string;
   etd: string;
   platform: string;
@@ -25,18 +36,43 @@ interface TrainService {
   destinationTiploc?: string;
   headcode: string;
   isPassengerService?: boolean;
+  stpIndicator?: string;
+  trainUid?: string;
+  activated?: boolean;
+  lastLocation?: string | null;
+}
+
+interface RemoteApiStatus {
+  configured: boolean;
+  apiUrlPreview: string;
+  candidateHeadcodesCount: number;
+  cachedDates: Array<{
+    date: string;
+    headcodeCount: number;
+    scheduleCount: number;
+    fetchedAt: string;
+  }>;
+  lastQueryAt: string | null;
+  lastQueryDurationMs: number | null;
+  lastError: string | null;
+  supportsDeparturesEndpoint: boolean | null;
 }
 
 const ELIZABETH_LINE_LOCATIONS = [
-  // TIPLOCs without CRS
+  // Operational Depots, Sidings & Turnbacks
   { tiploc: 'MDNHDRS', name: 'Maidenhead Turnback' },
   { tiploc: 'OLDOENG', name: 'Old Oak Engine Sdg' },
   { tiploc: 'ROYAOSD', name: 'Royal Oak Sidings' },
   { tiploc: 'OLDOXRS', name: 'Old Oak Depot' },
   { tiploc: 'MDNHDCS', name: 'Maidenhead CS' },
   { tiploc: 'GIDEPKS', name: 'Gidea Park CS' },
+  { tiploc: 'GIDECES', name: 'Gidea Pk C/E Spur' },
   { tiploc: 'SHENFMS', name: 'Shenfield CS' },
   { tiploc: 'ILFEMUD', name: 'Ilford E.M.U.D.' },
+  { tiploc: 'WBRNPKS', name: 'Westbourne Park Sidings' },
+  { tiploc: 'WEALEMU', name: 'West Ealing EMUD' },
+  { tiploc: 'ABWDXRS', name: 'Abbey Wood Sidings' },
+  { tiploc: 'PLMSXCR', name: 'Plumstead CS' },
   // Stations with both CRS and TIPLOC
   { crs: 'ABW', tiploc: 'ABWDXR', name: 'Abbey Wood' },
   { crs: 'WWC', tiploc: 'WOLWXR', name: 'Woolwich' },
@@ -57,12 +93,10 @@ const ELIZABETH_LINE_LOCATIONS = [
   { crs: 'BRE', tiploc: 'BRTWOOD', name: 'Brentwood' },
   { crs: 'SNF', tiploc: 'SHENFLD', name: 'Shenfield' },
   { crs: 'LST', tiploc: 'LIVSTLL', name: 'Liverpool Street' },
-  // { crs: 'LST', tiploc: 'LIVST', name: 'Liverpool Street HL' },
   { crs: 'ZFD', tiploc: 'FRNDXR', name: 'Farringdon' },
   { crs: 'TCR', tiploc: 'TOTCTRD', name: 'Tottenham Court Road' },
   { crs: 'BDS', tiploc: 'BONDST', name: 'Bond Street' },
   { crs: 'PAD', tiploc: 'PADTLL', name: 'Paddington LL' },
-  // { crs: 'PAD', tiploc: 'PADTON', name: 'Paddington GW' },
   { crs: 'AML', tiploc: 'ACTONML', name: 'Acton Main Line' },
   { crs: 'EAL', tiploc: 'EALINGB', name: 'Ealing Broadway' },
   { crs: 'WEA', tiploc: 'WEALING', name: 'West Ealing' },
@@ -84,23 +118,26 @@ const ELIZABETH_LINE_LOCATIONS = [
 ].sort((a, b) => a.name.localeCompare(b.name));
 
 const ELIZABETH_LINE_DESTINATIONS = [
-  // TIPLOCs without CRS
+  // Operational Depots, Sidings & Turnbacks
   { tiploc: 'MDNHDRS', name: 'Maidenhead Turnback' },
   { tiploc: 'OLDOENG', name: 'Old Oak Engine Sdg' },
   { tiploc: 'ROYAOSD', name: 'Royal Oak Sidings' },
   { tiploc: 'OLDOXRS', name: 'Old Oak Depot' },
   { tiploc: 'MDNHDCS', name: 'Maidenhead CS' },
   { tiploc: 'GIDEPKS', name: 'Gidea Park CS' },
+  { tiploc: 'GIDECES', name: 'Gidea Pk C/E Spur' },
   { tiploc: 'SHENFMS', name: 'Shenfield CS' },
   { tiploc: 'ILFEMUD', name: 'Ilford E.M.U.D.' },
-  // Stations with both CRS and TIPLOC
+  { tiploc: 'WBRNPKS', name: 'Westbourne Park Sidings' },
+  { tiploc: 'WEALEMU', name: 'West Ealing EMUD' },
+  { tiploc: 'ABWDXRS', name: 'Abbey Wood Sidings' },
+  { tiploc: 'PLMSXCR', name: 'Plumstead CS' },
+  // Primary Stations
   { crs: 'ABW', tiploc: 'ABWDXR', name: 'Abbey Wood' },
   { crs: 'GDP', tiploc: 'GIDEAPK', name: 'Gidea Park' },
   { crs: 'SNF', tiploc: 'SHENFLD', name: 'Shenfield' },
   { crs: 'LST', tiploc: 'LIVSTLL', name: 'Liverpool Street' },
-  // { crs: 'LST', tiploc: 'LIVST', name: 'Liverpool Street HL' },
   { crs: 'PAD', tiploc: 'PADTLL', name: 'Paddington LL' },
-  // { crs: 'PAD', tiploc: 'PADTON', name: 'Paddington GW' },
   { crs: 'HAY', tiploc: 'HAYESAH', name: 'Hayes & Harlington' },
   { crs: 'HAF', tiploc: 'HTRWTM4', name: 'Heathrow Terminal 4' },
   { crs: 'HWV', tiploc: 'HTRWTM5', name: 'Heathrow Terminal 5' },
@@ -120,6 +157,8 @@ const PRESET_ROUTES = [
 
 export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleDarkMode }: FindJobsProps) {
   const isDemoUser = Boolean(user.isDemo || user.email?.toLowerCase().startsWith('demo-'));
+  const isAdminOrMod = !isDemoUser && (user.role === 'admin' || user.role === 'moderator');
+
   const [crs, setCrs] = useState('PAD');
   const [date, setDate] = useState('');
   const [hour, setHour] = useState('');
@@ -128,33 +167,14 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [services, setServices] = useState<TrainService[]>([]);
-  const [boardMode, setBoardMode] = useState<'departure' | 'arrival'>('departure');
   const [hasSearched, setHasSearched] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
-  const [debugInfo, setDebugInfo] = useState<{
-    error?: string,
-    request?: string, 
-    response?: string,
-    cacheStats?: {
-      cachedServicesFound: number;
-      apiRequestsMade: number;
-      timeOfLastSearch?: string;
-      cachedTimeRange?: {
-        start: string;
-        end: string;
-      } | null;
-      rateLimit?: {
-        used: number;
-        limit: number;
-      };
-    }
-  } | null>(null);
+
+  const [feedStatus, setFeedStatus] = useState<RemoteApiStatus | null>(null);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
-
-  const [apiStats, setApiStats] = useState<any>(null);
-  const [graphView, setGraphView] = useState<'24h' | '30d'>('30d');
-  const [graphUserFilter, setGraphUserFilter] = useState<string>('all');
+  const [cacheMessage, setCacheMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const now = getLondonDate();
@@ -162,130 +182,134 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
     setDate(todayStr);
     setHour(String(now.getHours()).padStart(2, '0'));
     setMinute(String(now.getMinutes()).padStart(2, '0'));
-    
+
     if (isDemoUser) {
       setHasSearched(true);
       setServices([
         {
           std: '07:30',
+          arrAtDest: '08:25',
           date: todayStr,
           etd: 'On time',
           platform: 'A',
           operator: 'Elizabeth Line',
           operatorCode: 'XR',
           destination: 'Shenfield',
-          headcode: '9W36'
+          headcode: '9W36',
+          isPassengerService: true,
         },
         {
           std: '07:35',
+          arrAtDest: '08:06',
           date: todayStr,
           etd: 'On time',
           platform: 'B',
           operator: 'Elizabeth Line',
           operatorCode: 'XR',
           destination: 'Abbey Wood',
-          headcode: '9U38'
+          headcode: '9U38',
+          isPassengerService: true,
         },
         {
           std: '07:42',
+          arrAtDest: '08:30',
           date: todayStr,
           etd: 'Exp. 07:45',
           platform: 'A',
           operator: 'Elizabeth Line',
           operatorCode: 'XR',
           destination: 'Gidea Park',
-          headcode: '9W40'
+          headcode: '9W40',
+          isPassengerService: true,
         },
         {
           std: '07:48',
+          arrAtDest: '08:20',
           date: todayStr,
           etd: 'On time',
           platform: 'B',
           operator: 'Elizabeth Line',
           operatorCode: 'XR',
           destination: 'Heathrow Terminal 4',
-          headcode: '9H42'
+          headcode: '9H42',
+          isPassengerService: true,
         },
         {
           std: '07:55',
+          arrAtDest: '08:52',
           date: todayStr,
           etd: 'On time',
           platform: 'A',
           operator: 'Elizabeth Line',
           operatorCode: 'XR',
           destination: 'Reading',
-          headcode: '9R44'
+          headcode: '9R44',
+          isPassengerService: true,
         },
         {
           std: '08:02',
+          arrAtDest: '08:57',
           date: todayStr,
           etd: 'On time',
           platform: 'B',
           operator: 'Elizabeth Line',
           operatorCode: 'XR',
           destination: 'Shenfield',
-          headcode: '9W46'
-        }
+          headcode: '9W46',
+          isPassengerService: true,
+        },
       ]);
-    } else if (user.role === 'admin' || user.role === 'moderator') {
-      fetchApiStats();
+    } else if (isAdminOrMod) {
+      fetchFeedStatus();
     }
-  }, [user.role, isDemoUser]);
+  }, [isDemoUser, isAdminOrMod]);
 
-  const fetchApiStats = async () => {
+  const fetchFeedStatus = async () => {
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/admin/api-stats', {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const res = await fetch('/api/nr/status', {
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data = await res.json();
-        setApiStats(data);
+        setFeedStatus(data);
       }
     } catch (err) {
-      console.error('Failed to fetch API stats', err);
+      console.error('Failed to fetch Live Train API status', err);
     }
   };
 
   const handleClearCache = async () => {
     setClearingCache(true);
+    setCacheMessage(null);
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/nre/cache/clear', {
+      const res = await fetch('/api/nr/cache/clear', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
+      const data = await res.json();
+      if (data.status) setFeedStatus(data.status);
       if (res.ok) {
-        setDebugInfo(null);
-        setHasSearched(false);
-        setServices([]);
-        setError('');
+        setCacheMessage('Schedule cache cleared.');
       } else {
-        throw new Error('Failed to clear cache');
+        setCacheMessage('Failed to clear cache.');
       }
-    } catch (err) {
-      console.error(err);
-      setError('Unable to clear cache right now. Please contact an admin.');
+    } catch {
+      setCacheMessage('Failed to clear cache.');
     } finally {
       setClearingCache(false);
     }
   };
 
   const performSearch = async (originCode: string, destCode: string) => {
-    if (isDemoUser) {
+    if (isDemoUser) return;
+    const cleanOrigin = originCode.trim().toUpperCase();
+    if (!cleanOrigin) {
+      setError('Origin station or location is required.');
       return;
     }
-    const cleanCrs = originCode.trim().toUpperCase();
-    if (!cleanCrs) {
-      setError('CRS code is required.');
-      return;
-    }
-    const cleanFilterCrs = destCode.trim().toUpperCase();
-
-    if (cleanCrs.length > 3 && cleanFilterCrs.length > 3) {
-      setError('At least one standard station must be selected (cannot search from a Depot/Sidings to another Depot/Sidings).');
-      return;
-    }
+    const cleanDest = destCode.trim().toUpperCase();
 
     setLoading(true);
     setError('');
@@ -295,41 +319,41 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
     try {
       const token = localStorage.getItem('token');
       const params = new URLSearchParams();
-      params.append('crs', cleanCrs);
+      params.append('origin', cleanOrigin);
+      if (cleanDest) params.append('destination', cleanDest);
+      if (date) params.append('date', date);
       if (date && hour && minute) {
         params.append('time', `${date}T${hour}:${minute}:00`);
       }
-      if (cleanFilterCrs) params.append('filterCrs', cleanFilterCrs);
+      params.append('limit', '10');
 
-      const res = await fetch(`/api/nre/departures?${params.toString()}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+      const res = await fetch(`/api/nr/departures?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
+
       let data: any = null;
       try {
         data = await res.json();
       } catch {
         data = null;
       }
-      
-      if (data?.debug && (user.role === 'admin' || user.role === 'moderator')) {
+
+      if (data?.debug && isAdminOrMod) {
         setDebugInfo(data.debug);
+        if (data.debug.feedStatus) {
+          setFeedStatus(data.debug.feedStatus);
+        }
       }
 
       if (!res.ok || !data) {
-        if (user.role === 'admin' || user.role === 'moderator') {
-          fetchApiStats();
-        }
+        if (isAdminOrMod) fetchFeedStatus();
         setError('Unable to load live train services right now. Please contact an admin.');
         return;
       }
 
-      setBoardMode(data.boardMode === 'arrival' ? 'arrival' : 'departure');
       setServices(data.services || []);
-      if (user.role === 'admin' || user.role === 'moderator') {
-        fetchApiStats();
-      }
-    } catch (err: any) {
-      console.error('Error fetching departures:', err);
+    } catch (err) {
+      console.error('Error querying Remote Live Train API:', err);
       setError('Unable to load live train services right now. Please contact an admin.');
     } finally {
       setLoading(false);
@@ -348,57 +372,6 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
     await performSearch(originCode, destCode);
   };
 
-  const chartData = useMemo(() => {
-    if (!apiStats || !apiStats.requests) return [];
-    
-    let filteredRequests = apiStats.requests;
-    if (graphUserFilter !== 'all') {
-      filteredRequests = filteredRequests.filter((r: any) => r.userId === graphUserFilter);
-    }
-
-    const now = Date.now();
-    const result = [];
-
-    if (graphView === '24h') {
-      const msPerHour = 60 * 60 * 1000;
-      // create 24 buckets
-      const buckets = new Array(24).fill(0);
-      filteredRequests.forEach((req: any) => {
-        const hoursAgo = Math.floor((now - req.timestamp) / msPerHour);
-        if (hoursAgo >= 0 && hoursAgo < 24) {
-          buckets[hoursAgo]++;
-        }
-      });
-      // format for chart (from 23 hours ago to 0 hours ago)
-      for (let i = 23; i >= 0; i--) {
-        const d = new Date(now - i * msPerHour);
-        result.push({
-          label: `${d.getHours()}:00`,
-          requests: buckets[i]
-        });
-      }
-    } else {
-      const msPerDay = 24 * 60 * 60 * 1000;
-      // create 30 buckets
-      const buckets = new Array(30).fill(0);
-      filteredRequests.forEach((req: any) => {
-        const daysAgo = Math.floor((now - req.timestamp) / msPerDay);
-        if (daysAgo >= 0 && daysAgo < 30) {
-          buckets[daysAgo]++;
-        }
-      });
-      for (let i = 29; i >= 0; i--) {
-        const d = new Date(now - i * msPerDay);
-        result.push({
-          label: `${d.getDate()}/${d.getMonth()+1}`,
-          requests: buckets[i]
-        });
-      }
-    }
-
-    return result;
-  }, [apiStats, graphView, graphUserFilter]);
-
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors">
       <Header
@@ -414,7 +387,9 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">Find Jobs (Live Departures)</h1>
-          <p className="text-slate-600 dark:text-slate-400">Search for live train departures from any station to find headcodes.</p>
+          <p className="text-slate-600 dark:text-slate-400">
+            Search live Elizabeth Line schedules, VSTP short-term plans, and TRUST movements from the live feed database to find headcodes.
+          </p>
         </div>
 
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6 transition-colors">
@@ -447,7 +422,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                 ))}
               </select>
             </div>
-            
+
             <div className="flex-1 w-full md:w-auto min-w-0">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1 truncate">Destination</label>
               <select
@@ -455,9 +430,8 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                 onChange={(e) => setFilterCrs(e.target.value)}
                 disabled={isDemoUser}
                 className="w-full px-2 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-slate-900 dark:text-slate-100 transition-colors text-xs sm:text-[13px] appearance-none disabled:opacity-60 disabled:cursor-not-allowed"
-                required
               >
-                <option value="" disabled>Select station...</option>
+                <option value="">All Destinations</option>
                 {ELIZABETH_LINE_DESTINATIONS.map((station) => (
                   <option key={station.tiploc} value={station.crs || station.tiploc}>
                     {station.name} ({station.crs ? `${station.crs} / ${station.tiploc}` : station.tiploc})
@@ -465,7 +439,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                 ))}
               </select>
             </div>
-            
+
             <div className="w-full md:w-auto">
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Time</label>
               <div className="flex gap-1.5 sm:gap-2">
@@ -558,24 +532,31 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
               <div className="p-12 text-center text-slate-500 dark:text-slate-400">
                 <Navigation className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
                 <p className="text-lg font-medium text-slate-900 dark:text-slate-100 mb-1">No departures found</p>
-                <p>There are currently no departures from this station, or the CRS code is invalid.</p>
+                <p>No scheduled or VSTP Elizabeth Line services match this route, date, and time window.</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
                     <tr>
-                      <th className="px-4 py-3 font-medium">{boardMode === 'arrival' ? 'Arrives' : 'Departs'}</th>
+                      <th className="px-4 py-3 font-medium">Departs</th>
                       <th className="px-4 py-3 font-medium">Destination</th>
-                      <th className="px-4 py-3 font-medium">Platform</th>
+                      <th className="px-4 py-3 font-medium text-center">Platform</th>
                       <th className="px-4 py-3 font-medium">Headcode</th>
                       <th className="px-4 py-3 font-medium text-right">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
                     {services.map((service, index) => (
-                      <tr key={index} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors group">
-                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{service.std}</td>
+                      <tr key={`${service.trainUid || service.headcode}-${service.std}-${index}`} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors group">
+                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">
+                          <div>{service.std}</div>
+                          {service.arrAtDest && (
+                            <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
+                              Arr. {service.arrAtDest}
+                            </div>
+                          )}
+                        </td>
                         <td
                           className="px-4 py-3 text-slate-700 dark:text-slate-300 truncate max-w-[220px]"
                           title={
@@ -589,9 +570,9 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                         <td className="px-4 py-3 text-slate-700 dark:text-slate-300 text-center">{service.platform}</td>
                         <td className="px-4 py-3">
                           <div className="inline-flex items-center gap-1.5">
-                            <a 
+                            <a
                               href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${service.date}&headcode=${service.headcode}`}
-                              target="_blank" 
+                              target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:text-blue-600 hover:border-blue-400 font-mono text-xs font-semibold px-2 py-1 rounded transition-colors"
                             >
@@ -608,15 +589,24 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                           </div>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <span className={`font-medium ${
-                            service.etd === 'On time' 
-                              ? 'text-emerald-600 dark:text-emerald-400' 
-                              : service.etd === 'Cancelled' 
-                                ? 'text-red-600 dark:text-red-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                          }`}>
+                          <span
+                            className={`font-medium ${
+                              service.etd === 'On time'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : service.etd === 'Cancelled'
+                                  ? 'text-red-600 dark:text-red-400'
+                                  : service.etd === 'Scheduled'
+                                    ? 'text-slate-500 dark:text-slate-400'
+                                    : 'text-amber-600 dark:text-amber-400'
+                            }`}
+                          >
                             {service.etd}
                           </span>
+                          {service.lastLocation && (
+                            <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                              @ {service.lastLocation}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -627,158 +617,117 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
           </div>
         )}
 
-        {!isDemoUser && (user.role === 'admin' || user.role === 'moderator') && (
+        {isAdminOrMod && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden transition-colors mt-8">
-            <button 
+            <button
               onClick={() => setShowDebug(!showDebug)}
               className="w-full px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
             >
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                 <Shield className="w-5 h-5 text-indigo-500" />
-                Admin Panel (API & Debug Info)
+                Admin Panel (Remote Live Train API Status)
               </h2>
               <span className="text-sm font-medium text-blue-600 dark:text-blue-400">
                 {showDebug ? 'Hide' : 'Show'}
               </span>
             </button>
             {showDebug && (
-              <div className="p-6 space-y-6">
-                
-                {/* API Requests Graph */}
-                <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
-                    <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4" />
-                      API Requests Usage
-                    </h3>
-                    <div className="flex items-center gap-2">
-                      <select 
-                        value={graphUserFilter}
-                        onChange={(e) => setGraphUserFilter(e.target.value)}
-                        className="px-2 py-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded text-xs text-slate-900 dark:text-slate-100"
-                      >
-                        <option value="all">All Users</option>
-                        {apiStats?.users && Object.entries(apiStats.users).map(([id, name]) => (
-                          <option key={id} value={id}>{name as string}</option>
-                        ))}
-                      </select>
-                      <div className="bg-slate-200 dark:bg-slate-700 p-0.5 rounded flex items-center">
-                        <button 
-                          onClick={() => setGraphView('24h')}
-                          className={`px-2 py-1 text-xs rounded transition-colors ${graphView === '24h' ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                        >
-                          24h
-                        </button>
-                        <button 
-                          onClick={() => setGraphView('30d')}
-                          className={`px-2 py-1 text-xs rounded transition-colors ${graphView === '30d' ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'}`}
-                        >
-                          30d
-                        </button>
+              <div className="p-6 space-y-5">
+                {feedStatus && (
+                  <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 border border-slate-200 dark:border-slate-700 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        <Globe className="w-4 h-4 text-indigo-500" />
+                        <span>Remote FastAPI Connection</span>
                       </div>
-                    </div>
-                  </div>
-                  
-                  {apiStats ? (
-                    <div className="h-64 w-full mt-4 min-w-0">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#334155" opacity={0.2} />
-                          <XAxis 
-                            dataKey="label" 
-                            tick={{ fill: '#64748b', fontSize: 11 }}
-                            axisLine={{ stroke: '#cbd5e1' }}
-                            tickLine={false}
-                          />
-                          <YAxis 
-                            tick={{ fill: '#64748b', fontSize: 11 }}
-                            axisLine={false}
-                            tickLine={false}
-                          />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#f8fafc', fontSize: '12px' }}
-                            cursor={{ fill: '#334155', opacity: 0.1 }}
-                          />
-                          <Bar 
-                            dataKey="requests" 
-                            fill="#3b82f6" 
-                            radius={[4, 4, 0, 0]}
-                            maxBarSize={40}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ) : (
-                    <div className="h-64 flex items-center justify-center text-sm text-slate-500">Loading graph data...</div>
-                  )}
-                  {apiStats?.currentRateLimit && (
-                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 flex justify-between">
-                      <span>Global Rate Limit (Past Hour): <strong>{apiStats.currentRateLimit.used} / {apiStats.currentRateLimit.limit}</strong></span>
-                    </div>
-                  )}
-                </div>
-
-                {debugInfo && debugInfo.cacheStats && (
-                  <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
-                    <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center justify-between">
-                      <span>Current Search Cache Statistics</span>
-                      {debugInfo.cacheStats.timeOfLastSearch && (
-                        <span className="text-xs font-normal text-slate-500 dark:text-slate-400">
-                          Last searched: {new Date(debugInfo.cacheStats.timeOfLastSearch).toLocaleString()}
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border uppercase tracking-wide ${
+                            feedStatus.configured
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                              : 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300 border-red-200 dark:border-red-800'
+                          }`}
+                        >
+                          {feedStatus.configured ? 'Configured' : 'Not Configured'}
                         </span>
-                      )}
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <span className="text-slate-500 dark:text-slate-400">Services from Cache: </span>
-                        <span className="font-mono font-medium text-slate-900 dark:text-slate-100">{debugInfo.cacheStats.cachedServicesFound}</span>
+                        <button
+                          type="button"
+                          onClick={fetchFeedStatus}
+                          className="px-2.5 py-1 rounded border border-slate-300 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 inline-flex items-center gap-1"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Refresh
+                        </button>
                       </div>
-                      <div>
-                        <span className="text-slate-500 dark:text-slate-400">API Requests Made: </span>
-                        <span className="font-mono font-medium text-slate-900 dark:text-slate-100">{debugInfo.cacheStats.apiRequestsMade}</span>
-                      </div>
-                      {debugInfo.cacheStats.rateLimit && (
-                        <div className="sm:col-span-2">
-                          <span className="text-slate-500 dark:text-slate-400">Global API Usage (Past Hour): </span>
-                          <span className="font-mono font-medium text-slate-900 dark:text-slate-100">
-                            {debugInfo.cacheStats.rateLimit.used} / {debugInfo.cacheStats.rateLimit.limit}
-                          </span>
-                        </div>
-                      )}
-                      {debugInfo.cacheStats.cachedTimeRange && (
-                        <div className="sm:col-span-2 text-xs text-slate-500 dark:text-slate-400 italic">
-                          Cached items from {debugInfo.cacheStats.cachedTimeRange.start} to {debugInfo.cacheStats.cachedTimeRange.end}.
-                        </div>
-                      )}
                     </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                      <div className="bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <div className="text-slate-500 dark:text-slate-400">Cached Schedule Dates</div>
+                        <div className="font-mono font-bold text-base text-slate-900 dark:text-slate-100 mt-0.5">
+                          {feedStatus.cachedDates.length}
+                        </div>
+                      </div>
+                      <div className="bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <div className="text-slate-500 dark:text-slate-400">Catalog Headcodes</div>
+                        <div className="font-mono font-bold text-base text-slate-900 dark:text-slate-100 mt-0.5">
+                          {feedStatus.candidateHeadcodesCount.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700">
+                        <div className="text-slate-500 dark:text-slate-400">Last Query Latency</div>
+                        <div className="font-mono font-bold text-base text-slate-900 dark:text-slate-100 mt-0.5">
+                          {feedStatus.lastQueryDurationMs !== null ? `${feedStatus.lastQueryDurationMs}ms` : '—'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
+                      <div className="flex items-center gap-2 font-mono truncate">
+                        <Database className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">
+                          {feedStatus.apiUrlPreview || 'URL not configured'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleClearCache}
+                        disabled={clearingCache}
+                        className="px-3 py-1.5 bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-700 dark:text-red-400 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>{clearingCache ? 'Clearing...' : 'Clear Schedule Cache'}</span>
+                      </button>
+                    </div>
+
+                    {cacheMessage && (
+                      <div className="text-xs text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800 p-2.5 rounded border border-slate-200 dark:border-slate-700">
+                        {cacheMessage}
+                      </div>
+                    )}
+
+                    {feedStatus.lastError && (
+                      <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-xs text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap">
+                        API Error: {feedStatus.lastError}
+                      </div>
+                    )}
                   </div>
                 )}
-                
-                <div className="flex justify-end">
-                  <button
-                    onClick={handleClearCache}
-                    disabled={clearingCache}
-                    className="px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg text-sm font-medium hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {clearingCache ? 'Clearing...' : 'Clear Global Cache'}
-                  </button>
-                </div>
 
                 {debugInfo?.error && (
                   <div>
-                    <h3 className="text-sm font-medium text-red-600 dark:text-red-400 mb-2">API Error Details</h3>
+                    <h3 className="text-sm font-medium text-red-600 dark:text-red-400 mb-2">Error Details</h3>
                     <pre className="bg-red-50 dark:bg-red-950/30 p-4 rounded-lg overflow-auto max-h-[200px] text-xs text-red-700 dark:text-red-300 font-mono whitespace-pre-wrap border border-red-200 dark:border-red-900/50">
                       {debugInfo.error}
                     </pre>
                   </div>
                 )}
 
-                {debugInfo?.request && (
+                {debugInfo && !debugInfo.error && (
                   <div className="relative group">
                     <div className="flex justify-between items-center mb-2">
-                      <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Raw Request</h3>
-                      <button 
-                        onClick={() => navigator.clipboard.writeText(debugInfo.request || '')}
+                      <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Last Query Diagnostics</h3>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(JSON.stringify(debugInfo, null, 2))}
                         className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:text-indigo-400 dark:hover:bg-indigo-900/30 rounded transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
                         title="Copy to clipboard"
                       >
@@ -786,24 +735,7 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                       </button>
                     </div>
                     <pre className="bg-slate-100 dark:bg-slate-900 p-4 rounded-lg overflow-auto max-h-[300px] text-xs text-slate-800 dark:text-slate-200 font-mono whitespace-pre-wrap border border-slate-200 dark:border-slate-800">
-                      {debugInfo.request}
-                    </pre>
-                  </div>
-                )}
-                {debugInfo?.response && (
-                  <div className="relative group">
-                    <div className="flex justify-between items-center mb-2">
-                      <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Raw Response</h3>
-                      <button 
-                        onClick={() => navigator.clipboard.writeText(debugInfo.response || '')}
-                        className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:text-indigo-400 dark:hover:bg-indigo-900/30 rounded transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
-                        title="Copy to clipboard"
-                      >
-                        <Copy className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <pre className="bg-slate-100 dark:bg-slate-900 p-4 rounded-lg overflow-auto max-h-[300px] text-xs text-slate-800 dark:text-slate-200 font-mono whitespace-pre-wrap border border-slate-200 dark:border-slate-800">
-                      {debugInfo.response}
+                      {JSON.stringify(debugInfo, null, 2)}
                     </pre>
                   </div>
                 )}

@@ -55,9 +55,9 @@ const SECTIONS: HelpSection[] = [
   },
   { 
     id: 'find-jobs', 
-    label: 'Live Train Tracker (NRE)', 
+    label: 'Live Train Tracker', 
     icon: Train, 
-    description: 'National Rail Darwin live departures, TIPLOC search, and headcode lookups' 
+    description: 'Live train movements, VSTP updates, and timetable headcode search' 
   },
   { 
     id: 'faq', 
@@ -361,48 +361,48 @@ export default function HelpModal({ onClose }: HelpModalProps) {
             </div>
           )}
 
-          {/* 5. LIVE TRAIN TRACKER (NRE) */}
+          {/* 5. LIVE TRAIN TRACKER (NR PUBLIC DATA FEEDS) */}
           {activeTab === 'find-jobs' && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="border-b border-slate-200 dark:border-slate-700 pb-4">
                 <h4 className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                   <Train className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                  Live Train Tracker (National Rail Darwin)
+                  Live Train Tracker (TRUST, VSTP & CIF Schedule)
                 </h4>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Staff-grade real-time train departures, TIPLOC lookups, and timetable headcodes.
+                  Real-time TRUST movements, VSTP short-term plans, and timetable headcodes via the configured Live Train API.
                 </p>
               </div>
 
               <div className="space-y-4">
                 <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  Accessible via the <strong>Find Jobs</strong> button in the top navigation bar. This tool connects directly to the staff National Rail Enquiries (NRE OpenLDBSV) live feeds for the Elizabeth line network.
+                  Accessible via the <strong>Find Jobs</strong> button in the top navigation bar. This tool queries your configured Live Train API server (backed by Network Rail CIF schedules, VSTP updates, and live STOMP TRUST movements) for the Elizabeth line network.
                 </p>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/75 dark:bg-slate-800/40 space-y-2">
                     <div className="font-semibold text-slate-900 dark:text-slate-100 text-xs flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      Live Departures & Platforms
+                      Station & Depot-to-Depot Routing
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                      Search any station (e.g., Paddington, Abbey Wood, Shenfield, Heathrow) or non-passenger depot/sidings location (TIPLOCs such as <code className="font-mono text-[11px]">OLDOENG</code>, <code className="font-mono text-[11px]">ROYAOSD</code>) to view scheduled vs estimated departure times, platforms, and headcodes.
+                      Search between any Elizabeth line stations, depots, or sidings (such as <code className="font-mono text-[11px]">OLDOXRS</code>, <code className="font-mono text-[11px]">ILFEMUD</code>, <code className="font-mono text-[11px]">PLMSXCR</code>, <code className="font-mono text-[11px]">WBRNPKS</code>) including Empty Coaching Stock (<code className="font-mono text-[11px]">ECS</code>) moves.
                     </p>
                   </div>
 
                   <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/75 dark:bg-slate-800/40 space-y-2">
                     <div className="font-semibold text-slate-900 dark:text-slate-100 text-xs flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      Timetable & Hourly Analytics
+                      Live TRUST Variations & Platforms
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                      View frequency bar charts showing service densities per hour throughout the day, helping you plan cutouts and practical training trips.
+                      Live TRUST activations and movements update departure statuses, delays, cancellations, platforms, and last reported locations automatically in real time.
                     </p>
                   </div>
                 </div>
 
                 <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs">
-                  <strong>Pro Tip:</strong> Click any four-character train headcode in the search results to immediately copy it or inspect its schedule path.
+                  <strong>Pro Tip:</strong> Click any four-character train headcode in the search results to inspect its TDTools schedule path.
                 </div>
               </div>
             </div>

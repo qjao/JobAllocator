@@ -1,6 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { X, Check, ShieldCheck, Loader2, AlertCircle, Key, Train, RefreshCw, RotateCcw, ArrowRightLeft } from 'lucide-react';
+import {
+  X,
+  Check,
+  ShieldCheck,
+  Loader2,
+  AlertCircle,
+  Key,
+  Train,
+  RefreshCw,
+  Database,
+  Globe,
+  Trash2,
+} from 'lucide-react';
 
 interface NREConfigModalProps {
   isOpen: boolean;
@@ -8,43 +20,44 @@ interface NREConfigModalProps {
   isAdmin: boolean;
 }
 
+interface RemoteApiStatus {
+  configured: boolean;
+  apiUrlPreview: string;
+  candidateHeadcodesCount: number;
+  cachedDates: Array<{
+    date: string;
+    headcodeCount: number;
+    scheduleCount: number;
+    fetchedAt: string;
+  }>;
+  lastQueryAt: string | null;
+  lastQueryDurationMs: number | null;
+  lastError: string | null;
+  supportsDeparturesEndpoint: boolean | null;
+}
+
 interface TestResultState {
   success: boolean;
   responseTimeMs?: number;
   status?: number;
-  locationName?: string;
-  serviceCount?: number;
+  trainsCount?: number;
   sampleServices?: string[];
   error?: string;
 }
 
-const DEFAULT_DEPARTURE_URL = 'https://api1.raildata.org.uk/1010-live-departure-board---staff-version1_0/LDBSVWS/api/20220120';
-const DEFAULT_ARRIVAL_URL = 'https://api1.raildata.org.uk/1010-live-arrival-board---staff-version1_0/LDBSVWS/api/20220120';
-
 export default function NREConfigModal({ isOpen, onClose, isAdmin }: NREConfigModalProps) {
-  // Departure Board state
-  const [url, setUrl] = useState(DEFAULT_DEPARTURE_URL);
-  const [defaultUrl, setDefaultUrl] = useState(DEFAULT_DEPARTURE_URL);
+  const [url, setUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [apiKeyPreview, setApiKeyPreview] = useState('');
   const [hasApiKey, setHasApiKey] = useState(false);
-  const [savingDeparture, setSavingDeparture] = useState(false);
-  const [departureSuccess, setDepartureSuccess] = useState(false);
-  const [departureError, setDepartureError] = useState<string | null>(null);
-  const [departureTestResult, setDepartureTestResult] = useState<TestResultState | null>(null);
-
-  // Arrival Board state
-  const [arrivalUrl, setArrivalUrl] = useState(DEFAULT_ARRIVAL_URL);
-  const [defaultArrivalUrl, setDefaultArrivalUrl] = useState(DEFAULT_ARRIVAL_URL);
-  const [arrivalApiKey, setArrivalApiKey] = useState('');
-  const [arrivalApiKeyPreview, setArrivalApiKeyPreview] = useState('');
-  const [hasArrivalApiKey, setHasArrivalApiKey] = useState(false);
-  const [savingArrival, setSavingArrival] = useState(false);
-  const [arrivalSuccess, setArrivalSuccess] = useState(false);
-  const [arrivalError, setArrivalError] = useState<string | null>(null);
-  const [arrivalTestResult, setArrivalTestResult] = useState<TestResultState | null>(null);
+  const [apiKeyPreview, setApiKeyPreview] = useState('');
+  const [status, setStatus] = useState<RemoteApiStatus | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<TestResultState | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -53,184 +66,101 @@ export default function NREConfigModal({ isOpen, onClose, isAdmin }: NREConfigMo
 
   const loadSettings = async () => {
     setLoading(true);
-    setDepartureError(null);
-    setArrivalError(null);
+    setErrorMsg(null);
     try {
       const authToken = localStorage.getItem('token');
-      const res = await fetch('/api/settings/nre', {
-        headers: { 'Authorization': `Bearer ${authToken}` }
+      const res = await fetch('/api/settings/nr', {
+        headers: { Authorization: `Bearer ${authToken}` },
       });
       if (res.ok) {
         const data = await res.json();
-        setUrl(data.url || data.defaultUrl || DEFAULT_DEPARTURE_URL);
-        if (data.defaultUrl) setDefaultUrl(data.defaultUrl);
+        setUrl(data.url || '');
         setHasApiKey(Boolean(data.hasApiKey));
         setApiKeyPreview(data.apiKeyPreview || '');
-
-        setArrivalUrl(data.arrivalUrl || data.defaultArrivalUrl || DEFAULT_ARRIVAL_URL);
-        if (data.defaultArrivalUrl) setDefaultArrivalUrl(data.defaultArrivalUrl);
-        setHasArrivalApiKey(Boolean(data.hasArrivalApiKey));
-        setArrivalApiKeyPreview(data.arrivalApiKeyPreview || '');
+        setStatus(data.status || null);
       }
     } catch (e: any) {
-      console.warn('Failed to load Rail Data API settings:', e);
+      console.warn('Failed to load Live Train API settings:', e);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleTestAndSaveDeparture = async (e: React.FormEvent) => {
+  const handleTestAndSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSavingDeparture(true);
-    setDepartureSuccess(false);
-    setDepartureError(null);
-    setDepartureTestResult(null);
+    setSaving(true);
+    setSaveSuccess(null);
+    setErrorMsg(null);
+    setTestResult(null);
 
-    const targetUrl = url.trim() || defaultUrl;
-    const targetKey = apiKey.trim();
-
-    if (!targetKey && !hasApiKey) {
-      setDepartureError('Please enter your Live Departure Board Consumer API key.');
-      setSavingDeparture(false);
+    if (!url.trim()) {
+      setErrorMsg('Please enter your Live Train API Base URL (e.g. https://your-host.example.com).');
+      setSaving(false);
       return;
     }
 
     try {
       const authToken = localStorage.getItem('token');
-      const res = await fetch('/api/settings/nre/test', {
+      const res = await fetch('/api/settings/nr/test', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
+          Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({
-          board: 'departure',
-          url: targetUrl,
-          apiKey: targetKey || undefined,
-          saveOnSuccess: true
-        })
+          url: url.trim(),
+          apiKey: apiKey.trim() || undefined,
+          saveOnSuccess: true,
+        }),
       });
 
       const data = await res.json();
-      setDepartureTestResult(data);
+      setTestResult(data);
+      if (data.feedStatus && typeof data.feedStatus === 'object') {
+        setStatus(data.feedStatus);
+      } else if (data.status && typeof data.status === 'object') {
+        setStatus(data.status);
+      }
 
       if (data.success) {
-        setDepartureSuccess(true);
+        setSaveSuccess('API connection verified & saved! Schedule cache reset.');
         setApiKey('');
         await loadSettings();
-        setTimeout(() => setDepartureSuccess(false), 4000);
+        setTimeout(() => setSaveSuccess(null), 5000);
       } else {
-        setDepartureError(data.error || 'Failed to connect to Rail Data Live Departure Board API.');
+        setErrorMsg(data.error || 'Failed to connect to the remote Live Train API.');
       }
     } catch (e: any) {
-      setDepartureError(e.message || 'Error communicating with server');
+      setErrorMsg(e.message || 'Error communicating with server');
     } finally {
-      setSavingDeparture(false);
+      setSaving(false);
     }
   };
 
-  const handleTestAndSaveArrival = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingArrival(true);
-    setArrivalSuccess(false);
-    setArrivalError(null);
-    setArrivalTestResult(null);
-
-    const targetUrl = arrivalUrl.trim() || defaultArrivalUrl;
-    const targetKey = arrivalApiKey.trim();
-
-    if (!targetKey && !hasArrivalApiKey) {
-      setArrivalError('Please enter your Live Arrival Board Consumer API key.');
-      setSavingArrival(false);
-      return;
-    }
-
+  const handleClearCache = async () => {
+    setClearing(true);
+    setErrorMsg(null);
+    setSaveSuccess(null);
     try {
       const authToken = localStorage.getItem('token');
-      const res = await fetch('/api/settings/nre/test', {
+      const res = await fetch('/api/nr/cache/clear', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`
-        },
-        body: JSON.stringify({
-          board: 'arrival',
-          arrivalUrl: targetUrl,
-          arrivalApiKey: targetKey || undefined,
-          saveOnSuccess: true
-        })
+        headers: { Authorization: `Bearer ${authToken}` },
       });
-
       const data = await res.json();
-      setArrivalTestResult(data);
-
-      if (data.success) {
-        setArrivalSuccess(true);
-        setArrivalApiKey('');
-        await loadSettings();
-        setTimeout(() => setArrivalSuccess(false), 4000);
-      } else {
-        setArrivalError(data.error || 'Failed to connect to Rail Data Live Arrival Board API.');
+      if (data.status) setStatus(data.status);
+      if (res.ok) {
+        setSaveSuccess('Cached schedule entries cleared.');
+        setTimeout(() => setSaveSuccess(null), 3500);
       }
     } catch (e: any) {
-      setArrivalError(e.message || 'Error communicating with server');
+      setErrorMsg(e?.message || 'Failed to clear cache');
     } finally {
-      setSavingArrival(false);
+      setClearing(false);
     }
   };
 
   if (!isOpen) return null;
-
-  const renderTestResultCard = (result: TestResultState | null, sampleTitle: string) => {
-    if (!result) return null;
-    return (
-      <div className={`mt-3 p-3.5 rounded-xl border text-xs space-y-2.5 ${
-        result.success
-          ? 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200'
-          : 'bg-red-50/80 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-900 dark:text-red-200'
-      }`}>
-        <div className="flex items-center justify-between font-bold pb-2 border-b border-slate-200 dark:border-slate-700">
-          <div className="flex items-center gap-2">
-            {result.success ? (
-              <>
-                <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span className="text-emerald-700 dark:text-emerald-400">Connection Verified (HTTP {result.status})</span>
-              </>
-            ) : (
-              <>
-                <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
-                <span>Connection Check Failed</span>
-              </>
-            )}
-          </div>
-          {result.responseTimeMs !== undefined && (
-            <span className="text-[11px] font-mono text-slate-500">{result.responseTimeMs}ms</span>
-          )}
-        </div>
-
-        {result.success && (
-          <div className="bg-white dark:bg-slate-900/60 p-3 rounded-lg border border-slate-200 dark:border-slate-800 text-[11px] space-y-1.5 font-mono">
-            <div className="flex justify-between">
-              <span>Station Tested:</span>
-              <strong className="text-slate-900 dark:text-slate-100">{result.locationName || 'London Paddington (PAD)'}</strong>
-            </div>
-            <div className="flex justify-between">
-              <span>Elizabeth Line (XR) Services Returned:</span>
-              <strong className="text-emerald-600 dark:text-emerald-400">{result.serviceCount ?? 0}</strong>
-            </div>
-            {result.sampleServices && result.sampleServices.length > 0 && (
-              <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800 space-y-0.5 text-[10px] text-slate-500 dark:text-slate-400">
-                <div className="font-semibold text-slate-700 dark:text-slate-300">{sampleTitle}:</div>
-                {result.sampleServices.map((item, idx) => (
-                  <div key={idx}>• {item}</div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -247,11 +177,11 @@ export default function NREConfigModal({ isOpen, onClose, isAdmin }: NREConfigMo
               <Train className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                Rail Data Live Boards API
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Live Train API (Docker Feed)
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Configures the JSON LDBSVWS staff API endpoints and <code className="font-mono">x-apikey</code> keys used by Find Jobs.
+                Retrieves stored Network Rail TRUST, VSTP & Schedule data from your API via HTTP <code className="font-mono">/api/live</code> + <code className="font-mono">x-api-key</code>.
               </p>
             </div>
           </div>
@@ -265,187 +195,201 @@ export default function NREConfigModal({ isOpen, onClose, isAdmin }: NREConfigMo
         </div>
 
         {/* Modal Content */}
-        <div className="p-6 overflow-y-auto space-y-6">
+        <div className="p-6 overflow-y-auto space-y-5">
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-purple-600" />
             </div>
           ) : (
             <>
-              {/* 1. Live Departure Board API */}
-              <form onSubmit={handleTestAndSaveDeparture} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-4">
+              {/* Remote Status Card */}
+              {status && (
+                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/75 dark:bg-slate-800/40 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
+                      <Database className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                      <span>Connection & Cache Overview</span>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border uppercase tracking-wide ${
+                        status.configured
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                          : 'bg-red-100 text-red-800 dark:bg-red-950/60 dark:text-red-300 border-red-200 dark:border-red-800'
+                      }`}
+                    >
+                      {status.configured ? 'Configured' : 'Not Configured'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                    <div className="bg-white dark:bg-slate-900/70 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Cached Schedule Dates</div>
+                      <div className="font-mono font-bold text-slate-900 dark:text-slate-100 mt-0.5">
+                        {status.cachedDates.length}
+                      </div>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900/70 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Catalog Headcodes</div>
+                      <div className="font-mono font-bold text-slate-900 dark:text-slate-100 mt-0.5">
+                        {status.candidateHeadcodesCount.toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="bg-white dark:bg-slate-900/70 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">Last Query Latency</div>
+                      <div className="font-mono font-bold text-slate-900 dark:text-slate-100 mt-0.5">
+                        {status.lastQueryDurationMs !== null ? `${status.lastQueryDurationMs}ms` : '—'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {status.lastError && (
+                    <div className="p-2.5 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-[11px] text-red-700 dark:text-red-300 font-mono break-all">
+                      Last Error: {status.lastError}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Form */}
+              <form onSubmit={handleTestAndSave} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                      <Train className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                      1. Live Departure Board API
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Remote Endpoint & API Key
                     </h3>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      Used for station-to-station and station-to-depot departure searches.
+                      No STOMP connection is opened by this app — queries go strictly over HTTPS to your server.
                     </p>
                   </div>
                   {hasApiKey && (
                     <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono">
-                      Active ({apiKeyPreview})
+                      Key Saved ({apiKeyPreview})
                     </span>
                   )}
                 </div>
 
-                {departureSuccess && (
+                {saveSuccess && (
                   <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
                     <Check className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                    <span>Departure API key verified & saved! Live cache cleared.</span>
+                    <span>{saveSuccess}</span>
                   </div>
                 )}
 
-                {departureError && (
+                {errorMsg && (
                   <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-800 dark:text-red-300 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
-                    <span className="break-words">{departureError}</span>
+                    <span className="break-words">{errorMsg}</span>
                   </div>
                 )}
 
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                      Departure API Base URL
-                    </label>
-                    {url.trim() !== defaultUrl && isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => setUrl(defaultUrl)}
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        Reset to Default
-                      </button>
-                    )}
-                  </div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1">
+                    <Globe className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                    Live Train API URL (<code className="font-mono">NR_LIVE_API_URL</code>)
+                  </label>
                   <input
                     type="url"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
-                    placeholder={defaultUrl}
+                    placeholder="https://your-api-domain.example.com"
                     disabled={!isAdmin}
                     className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
                   />
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                    Enter either the base URL (e.g. <code className="font-mono">https://host.com</code>) or full <code className="font-mono">/api/live</code> endpoint.
+                  </p>
                 </div>
 
                 <div>
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1">
                     <Key className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
-                    Departure API Key (<code className="font-mono">x-apikey</code>)
+                    API Key (<code className="font-mono">x-api-key</code> / <code className="font-mono">API_SECRET_KEY</code>)
                   </label>
                   <input
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={hasApiKey ? 'Enter new Departure API key to overwrite...' : 'Paste Consumer Key for Live Departure Board - Staff Version'}
+                    placeholder={hasApiKey ? 'Enter new API key to overwrite...' : 'Paste your API_SECRET_KEY (optional if unset on remote)'}
                     disabled={!isAdmin}
                     className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-purple-500 disabled:opacity-60"
                   />
                 </div>
 
-                <div className="pt-1">
+                <div className="pt-1 flex flex-wrap items-center gap-3">
                   <button
                     type="submit"
-                    disabled={savingDeparture || !isAdmin || (!apiKey.trim() && !hasApiKey)}
+                    disabled={saving || !isAdmin || !url.trim()}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-xs font-semibold text-white shadow-xs disabled:opacity-50 transition-colors cursor-pointer"
                   >
-                    {savingDeparture ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    <span>Save & Test Departure API</span>
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    <span>Save & Test Connection</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleClearCache}
+                    disabled={clearing || !isAdmin}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{clearing ? 'Clearing...' : 'Clear Schedule Cache'}</span>
                   </button>
                 </div>
 
-                {renderTestResultCard(departureTestResult, 'Sample Live Departures')}
-              </form>
+                {testResult && (
+                  <div
+                    className={`mt-3 p-3.5 rounded-xl border text-xs space-y-2.5 ${
+                      testResult.success
+                        ? 'bg-slate-50 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200'
+                        : 'bg-red-50/80 dark:bg-red-950/30 border-red-200 dark:border-red-800 text-red-900 dark:text-red-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between font-bold pb-2 border-b border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center gap-2">
+                        {testResult.success ? (
+                          <>
+                            <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                            <span className="text-emerald-700 dark:text-emerald-400">
+                              Connection Verified
+                              {(typeof testResult.status === 'number' || typeof testResult.status === 'string')
+                                ? ` (HTTP ${testResult.status})`
+                                : ''}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                            <span>Connection Check Failed</span>
+                          </>
+                        )}
+                      </div>
+                      {testResult.responseTimeMs !== undefined && (
+                        <span className="text-[11px] font-mono text-slate-500">{testResult.responseTimeMs}ms</span>
+                      )}
+                    </div>
 
-              {/* 2. Live Arrival Board API */}
-              <form onSubmit={handleTestAndSaveArrival} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                      <ArrowRightLeft className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      2. Live Arrival Board API (Depot Origin Reverse Lookup)
-                    </h3>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      Used via <code className="font-mono">GetArrivalBoardByTIPLOC</code> when searching from a depot/siding origin (e.g. Old Oak Depot → Paddington).
-                    </p>
-                  </div>
-                  {hasArrivalApiKey && (
-                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono">
-                      Active ({arrivalApiKeyPreview})
-                    </span>
-                  )}
-                </div>
-
-                {arrivalSuccess && (
-                  <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
-                    <Check className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                    <span>Arrival API key verified & saved! Live cache cleared.</span>
-                  </div>
-                )}
-
-                {arrivalError && (
-                  <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-800 dark:text-red-300 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
-                    <span className="break-words">{arrivalError}</span>
-                  </div>
-                )}
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                      Arrival API Base URL
-                    </label>
-                    {arrivalUrl.trim() !== defaultArrivalUrl && isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => setArrivalUrl(defaultArrivalUrl)}
-                        className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        Reset to Default
-                      </button>
+                    {testResult.success && (
+                      <div className="bg-white dark:bg-slate-900/60 p-3 rounded-lg border border-slate-200 dark:border-slate-800 text-[11px] space-y-1.5 font-mono">
+                        <div className="flex justify-between">
+                          <span>Matched Sample Headcodes:</span>
+                          <strong className="text-emerald-600 dark:text-emerald-400">
+                            {testResult.trainsCount ?? 0}
+                          </strong>
+                        </div>
+                        {testResult.sampleServices && testResult.sampleServices.length > 0 && (
+                          <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800 space-y-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+                            <div className="font-semibold text-slate-700 dark:text-slate-300">
+                              Sample Services from Your Database:
+                            </div>
+                            {testResult.sampleServices.map((item, idx) => (
+                              <div key={idx}>• {item}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
-                  <input
-                    type="url"
-                    value={arrivalUrl}
-                    onChange={(e) => setArrivalUrl(e.target.value)}
-                    placeholder={defaultArrivalUrl}
-                    disabled={!isAdmin}
-                    className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1">
-                    <Key className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                    Arrival API Key (<code className="font-mono">x-apikey</code>)
-                  </label>
-                  <input
-                    type="password"
-                    value={arrivalApiKey}
-                    onChange={(e) => setArrivalApiKey(e.target.value)}
-                    placeholder={hasArrivalApiKey ? 'Enter new Arrival API key to overwrite...' : 'Paste Consumer Key for Live Arrival Board - Staff Version'}
-                    disabled={!isAdmin}
-                    className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
-                  />
-                </div>
-
-                <div className="pt-1">
-                  <button
-                    type="submit"
-                    disabled={savingArrival || !isAdmin || (!arrivalApiKey.trim() && !hasArrivalApiKey)}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-xs disabled:opacity-50 transition-colors cursor-pointer"
-                  >
-                    {savingArrival ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    <span>Save & Test Arrival API</span>
-                  </button>
-                </div>
-
-                {renderTestResultCard(arrivalTestResult, 'Sample Live Arrivals')}
+                )}
               </form>
             </>
           )}

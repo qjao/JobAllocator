@@ -446,7 +446,7 @@ export default function AdminUsersPage({ user, isDemo, onLogout, onNavigate, dar
                         className="inline-flex items-center justify-center gap-2 px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-xs transition-colors cursor-pointer"
                       >
                         <Train className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                        <span>Rail Data API</span>
+                        <span>Live Train API</span>
                       </button>
                     </>
                   )}

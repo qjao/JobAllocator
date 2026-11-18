@@ -142,11 +142,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
-// 1. Shared Secret Token
-define('TDTOOLS_API_SECRET', '${token.trim() || 'tdtools_allocator_secure_token_2025'}');
+// 1. Load TDtools configuration ($config) & core in open mode
+global $_admin, $link, $config;
+$type = "open";
+if (file_exists(__DIR__ . '/autoload.php')) {
+    require_once __DIR__ . '/autoload.php';
+} elseif (file_exists(__DIR__ . '/../autoload.php')) {
+    require_once __DIR__ . '/../autoload.php';
+}
+if (empty($config) && isset($GLOBALS['config']) && is_array($GLOBALS['config'])) {
+    $config = $GLOBALS['config'];
+}
 
-// 2. Authenticate Allocator Request
-$authHeader = isset($_SERVER['HTTP_AUTHORIZATION']) ? $_SERVER['HTTP_AUTHORIZATION'] : '';
+// 2. Read Shared Secret Token from $config (add $config['tdtools_api_secret'] = '...'; in your config file)
+$expectedSecret = '';
+if (isset($config) && is_array($config)) {
+    $expectedSecret = (string)(
+        $config['tdtools_api_secret']
+        ?? $config['api_diagram_secret']
+        ?? $config['api_secret']
+        ?? ''
+    );
+}
+if ($expectedSecret === '' && defined('TDTOOLS_API_SECRET')) {
+    $expectedSecret = (string)TDTOOLS_API_SECRET;
+}
+if ($expectedSecret === '' && getenv('TDTOOLS_API_SECRET')) {
+    $expectedSecret = (string)getenv('TDTOOLS_API_SECRET');
+}
+$expectedSecret = trim($expectedSecret);
+
+if ($expectedSecret === '') {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'Server configuration error: tdtools_api_secret missing in $config']);
+    exit();
+}
+
+// 3. Authenticate Allocator Request
+$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
 $token = '';
 if (preg_match('/Bearer\\s+(\\S+)/i', $authHeader, $matches)) {
     $token = $matches[1];
@@ -156,23 +189,13 @@ if (preg_match('/Bearer\\s+(\\S+)/i', $authHeader, $matches)) {
     $token = $_SERVER['HTTP_X_API_TOKEN'];
 }
 
-if (empty($token) || !hash_equals(TDTOOLS_API_SECRET, $token)) {
+if (empty($token) || !hash_equals($expectedSecret, $token)) {
     http_response_code(401);
     echo json_encode(['success' => false, 'error' => 'Unauthorized']);
     exit();
 }
 
-// 3. Treat Allocator as Admin on TDtools side for accessing allocations
-global $_admin, $link;
-$_admin = true;
-
-// 4. Load TDtools core
-$type = "open";
-if (file_exists(__DIR__ . '/autoload.php')) {
-    require_once __DIR__ . '/autoload.php';
-} elseif (file_exists(__DIR__ . '/../autoload.php')) {
-    require_once __DIR__ . '/../autoload.php';
-}
+// 4. Treat Allocator as Admin on TDtools side ONLY after authentication passes
 $_admin = true;
 
 // Fallback check for alternative database connection names
@@ -581,7 +604,7 @@ echo json_encode([
                       className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
                     />
                     <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-                      The secret token configured in <code className="font-mono">api_diagram.php</code> on your TDtools server.
+                      The secret token set in <code className="font-mono">$config['tdtools_api_secret']</code> on your TDtools server.
                     </p>
                   </div>
 

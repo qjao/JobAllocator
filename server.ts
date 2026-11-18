@@ -11,6 +11,7 @@ import fs from 'fs';
 import { createHash, randomBytes } from 'crypto';
 import net from 'net';
 import { sendPasswordResetEmail, sendNewRegistrationAlert, sendInstructorApprovedEmail, isSmtpConfigured } from './emailService';
+import { createNrLiveApiService } from './nrLiveApiService';
 const portArgIndex = process.argv.indexOf('--port');
 const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
 const PORT = cliPort || 3000;
@@ -2000,39 +2001,21 @@ async function startServer() {
     }
   });
 
-  interface StationCacheEntry {
-    timestamp: number;
-    requestedStartTime: string;
-    servicesMap: Map<string, any>;
-    lastRequest: string;
-    lastResponse: string;
-    boardType?: string;
-  }
-  const stationCache = new Map<string, StationCacheEntry>();
-  const CACHE_TTL_MS = 10 * 60 * 1000;
-
-  const DEFAULT_RAILDATA_BASE_URL = 'https://api1.raildata.org.uk/1010-live-departure-board---staff-version1_0/LDBSVWS/api/20220120';
-  const DEFAULT_RAILDATA_ARRIVAL_URL = 'https://api1.raildata.org.uk/1010-live-arrival-board---staff-version1_0/LDBSVWS/api/20220120';
-
-  function getNreConfig() {
-    let url = process.env.NRE_API_URL || process.env.RAILDATA_API_URL || DEFAULT_RAILDATA_BASE_URL;
-    let apiKey = process.env.NRE_STAFF_TOKEN || process.env.RAILDATA_API_KEY || '';
-    let arrivalUrl = process.env.NRE_ARRIVAL_API_URL || process.env.RAILDATA_ARRIVAL_API_URL || DEFAULT_RAILDATA_ARRIVAL_URL;
-    let arrivalApiKey = process.env.NRE_ARRIVAL_STAFF_TOKEN || process.env.RAILDATA_ARRIVAL_API_KEY || '';
+  function getNrLiveApiConfig() {
+    let url = process.env.NR_LIVE_API_URL || process.env.NR_API_URL || '';
+    let apiKey = process.env.NR_LIVE_API_KEY || process.env.API_SECRET_KEY || '';
     try {
-      const rows = db.prepare("SELECT key, value FROM app_settings WHERE key IN ('nre_api_url', 'nre_api_key', 'nre_arrival_api_url', 'nre_arrival_api_key')").all() as Array<{ key: string; value: string }>;
+      const rows = db
+        .prepare("SELECT key, value FROM app_settings WHERE key IN ('nr_live_api_url', 'nr_live_api_key')")
+        .all() as Array<{ key: string; value: string }>;
       for (const r of rows) {
-        if (r.key === 'nre_api_url' && r.value) url = r.value;
-        if (r.key === 'nre_api_key' && r.value) apiKey = r.value;
-        if (r.key === 'nre_arrival_api_url' && r.value) arrivalUrl = r.value;
-        if (r.key === 'nre_arrival_api_key' && r.value) arrivalApiKey = r.value;
+        if (r.key === 'nr_live_api_url' && r.value) url = r.value;
+        if (r.key === 'nr_live_api_key' && r.value) apiKey = r.value;
       }
     } catch (e) {}
     return {
-      url: String(url || DEFAULT_RAILDATA_BASE_URL).trim().replace(/\/+$/, ''),
+      url: String(url || '').trim().replace(/\/+$/, ''),
       apiKey: String(apiKey || '').trim(),
-      arrivalUrl: String(arrivalUrl || DEFAULT_RAILDATA_ARRIVAL_URL).trim().replace(/\/+$/, ''),
-      arrivalApiKey: String(arrivalApiKey || '').trim()
     };
   }
 
@@ -2053,722 +2036,264 @@ async function startServer() {
     return `${map.year}-${map.month}-${map.day}T${hour}:${map.minute}:${map.second}`;
   }
 
-  function toRailDataTime(isoTime: string) {
-    return String(isoTime || getLondonTimeIso()).replace(/[-:]/g, '').substring(0, 15);
-  }
-
   function maskSecret(secret: string) {
     if (!secret) return '';
     if (secret.length <= 8) return '****';
     return `${secret.substring(0, 4)}...${secret.slice(-4)}`;
   }
 
-  // Get Rail Data / NRE API Settings (real Admin only)
-  app.get('/api/settings/nre', authenticateToken, requireRealAdmin, (req: any, res) => {
+  async function getCandidateHeadcodesFromCatalog(): Promise<string[]> {
+    const extractFromMap = (hcMap: any): string[] => {
+      if (!hcMap || typeof hcMap !== 'object') return [];
+      const set = new Set<string>();
+      for (const list of Object.values(hcMap)) {
+        if (Array.isArray(list)) {
+          for (const h of list) {
+            const clean = String(h || '').trim().toUpperCase();
+            if (clean) set.add(clean);
+          }
+        }
+      }
+      return Array.from(set);
+    };
+
+    if (diagramCatalogCache?.payload?.headcodesMap) {
+      const list = extractFromMap(diagramCatalogCache.payload.headcodesMap);
+      if (list.length > 0) return list;
+    }
+
     try {
-      const { url, apiKey, arrivalUrl, arrivalApiKey } = getNreConfig();
+      const cachedRow = db.prepare(
+        "SELECT cache_date, api_url, payload, updated_at FROM diagram_catalog_cache WHERE id = 'default'"
+      ).get() as any;
+      if (cachedRow?.payload) {
+        const parsed = JSON.parse(cachedRow.payload);
+        if (parsed?.headcodesMap) {
+          const list = extractFromMap(parsed.headcodesMap);
+          if (list.length > 0) return list;
+        }
+      }
+    } catch {}
+
+    // If not yet cached in SQLite, pull once from TDtools if configured
+    try {
+      const { url: externalApiUrl, token: apiToken } = getTDToolsConfig({} as any);
+      if (externalApiUrl && validateExternalUrl(externalApiUrl)) {
+        const targetUrl = new URL(externalApiUrl);
+        targetUrl.searchParams.set('action', 'diagrams');
+        const extRes = await fetch(targetUrl.toString(), {
+          headers: {
+            ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (extRes.ok) {
+          const extData = await extRes.json();
+          if (extData?.headcodesMap) {
+            return extractFromMap(extData.headcodesMap);
+          }
+        }
+      }
+    } catch {}
+
+    return [];
+  }
+
+  const nrLiveApi = createNrLiveApiService(
+    db,
+    getNrLiveApiConfig,
+    validateExternalUrl,
+    () => getCandidateHeadcodesFromCatalog()
+  );
+
+  // Get Remote Live Train API Settings & Cache Status (real Admin only)
+  app.get('/api/settings/nr', authenticateToken, requireRealAdmin, (_req: any, res) => {
+    try {
+      const cfg = getNrLiveApiConfig();
       res.json({
-        url,
-        defaultUrl: DEFAULT_RAILDATA_BASE_URL,
-        hasApiKey: !!apiKey,
-        apiKeyPreview: maskSecret(apiKey),
-        arrivalUrl,
-        defaultArrivalUrl: DEFAULT_RAILDATA_ARRIVAL_URL,
-        hasArrivalApiKey: !!arrivalApiKey,
-        arrivalApiKeyPreview: maskSecret(arrivalApiKey)
+        url: cfg.url,
+        hasApiKey: !!cfg.apiKey,
+        apiKeyPreview: maskSecret(cfg.apiKey),
+        status: nrLiveApi.getStatus(),
       });
     } catch (e: any) {
-      res.status(500).json({ error: 'Failed to read Rail Data API settings' });
+      res.status(500).json({ error: 'Failed to read Live Train API settings' });
     }
   });
 
-  // Save Rail Data / NRE API Settings (real Admin only)
-  app.post('/api/settings/nre', authenticateToken, requireRealAdmin, (req: any, res) => {
+  // Test & Save Remote Live Train API Connection (real Admin only)
+  app.post('/api/settings/nr/test', authenticateToken, requireRealAdmin, async (req: any, res) => {
     try {
-      const { url, apiKey, arrivalUrl, arrivalApiKey } = req.body;
-      if (url !== undefined && String(url).trim() !== '' && !validateExternalUrl(String(url).trim())) {
-        return res.status(400).json({ error: 'Invalid Departure API URL' });
-      }
-      if (arrivalUrl !== undefined && String(arrivalUrl).trim() !== '' && !validateExternalUrl(String(arrivalUrl).trim())) {
-        return res.status(400).json({ error: 'Invalid Arrival API URL' });
-      }
+      const { url, apiKey, saveOnSuccess = true } = req.body || {};
+      const current = getNrLiveApiConfig();
 
-      const stmt = db.prepare(`
-        INSERT INTO app_settings (key, value) VALUES (?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-      `);
-      if (url !== undefined && String(url).trim()) {
-        stmt.run('nre_api_url', String(url).trim().replace(/\/+$/, ''));
-      } else if (url === '') {
-        stmt.run('nre_api_url', DEFAULT_RAILDATA_BASE_URL);
-      }
-      if (apiKey !== undefined && String(apiKey).trim() !== '') {
-        stmt.run('nre_api_key', String(apiKey).trim());
-      }
-      if (arrivalUrl !== undefined && String(arrivalUrl).trim()) {
-        stmt.run('nre_arrival_api_url', String(arrivalUrl).trim().replace(/\/+$/, ''));
-      } else if (arrivalUrl === '') {
-        stmt.run('nre_arrival_api_url', DEFAULT_RAILDATA_ARRIVAL_URL);
-      }
-      if (arrivalApiKey !== undefined && String(arrivalApiKey).trim() !== '') {
-        stmt.run('nre_arrival_api_key', String(arrivalApiKey).trim());
-      }
-      stationCache.clear();
-      res.json({ success: true, message: 'Rail Data API settings saved successfully' });
-    } catch (e: any) {
-      res.status(500).json({ error: 'Failed to update Rail Data API settings' });
-    }
-  });
+      const targetUrl = (url !== undefined && String(url).trim() !== '' ? String(url).trim() : current.url).replace(/\/+$/, '');
+      const targetApiKey = apiKey !== undefined && String(apiKey).trim() !== '' ? String(apiKey).trim() : current.apiKey;
 
-  // Test Rail Data / NRE API Connection (real Admin only)
-  app.post('/api/settings/nre/test', authenticateToken, requireRealAdmin, async (req: any, res) => {
-    try {
-      const { board = 'departure', url, apiKey, arrivalUrl, arrivalApiKey, saveOnSuccess } = req.body;
-      const isArrivalTest = board === 'arrival';
-      const currentConfig = getNreConfig();
-      const targetUrl = isArrivalTest
-        ? (arrivalUrl !== undefined && String(arrivalUrl).trim() ? String(arrivalUrl).trim() : (url !== undefined && String(url).trim() ? String(url).trim() : currentConfig.arrivalUrl)).replace(/\/+$/, '')
-        : (url !== undefined && String(url).trim() ? String(url).trim() : currentConfig.url).replace(/\/+$/, '');
-      const targetApiKey = isArrivalTest
-        ? (arrivalApiKey !== undefined && String(arrivalApiKey).trim() !== '' ? String(arrivalApiKey).trim() : (apiKey !== undefined && String(apiKey).trim() !== '' ? String(apiKey).trim() : currentConfig.arrivalApiKey))
-        : (apiKey !== undefined && String(apiKey).trim() !== '' ? String(apiKey).trim() : currentConfig.apiKey);
+      if (!targetUrl) {
+        return res.status(400).json({
+          success: false,
+          error: 'Remote Live Train API URL is required.'
+        });
+      }
 
       if (!validateExternalUrl(targetUrl)) {
         return res.status(400).json({
           success: false,
-          error: 'Invalid or disallowed Rail Data API URL'
+          error: 'Invalid or disallowed Live Train API URL.'
         });
       }
 
-      if (!targetApiKey) {
-        return res.status(400).json({
-          success: false,
-          error: isArrivalTest ? 'No Rail Data Arrival API Key specified' : 'No Rail Data Departure API Key specified'
-        });
+      const result = await nrLiveApi.testConnection(targetUrl, targetApiKey);
+
+      if (!result.success) {
+        return res.json(result);
       }
-
-      const apiTime = toRailDataTime(getLondonTimeIso());
-      const testUrl = isArrivalTest
-        ? new URL(`${targetUrl}/GetArrivalBoardByTIPLOC/PADTLL/${apiTime}`)
-        : new URL(`${targetUrl}/GetDepBoardWithDetails/PAD/${apiTime}`);
-      testUrl.searchParams.set('numRows', '10');
-      testUrl.searchParams.set('timeWindow', '120');
-      testUrl.searchParams.set('filterTOC', 'XR');
-      testUrl.searchParams.set('getNonPassengerServices', 'true');
-
-      const startTime = Date.now();
-      const response = await fetch(testUrl.toString(), {
-        method: 'GET',
-        headers: {
-          'x-apikey': targetApiKey,
-          'Accept': 'application/json',
-          'cache-control': 'no-cache'
-        }
-      });
-      const responseTimeMs = Date.now() - startTime;
-      const rawText = await response.text();
-
-      let parsed: any = null;
-      try {
-        parsed = rawText ? JSON.parse(rawText) : null;
-      } catch (e) {
-        parsed = null;
-      }
-
-      if (!response.ok) {
-        const faultMsg = parsed?.fault?.faultstring || parsed?.Message || parsed?.message || parsed?.error || rawText || `HTTP ${response.status}`;
-        return res.json({
-          success: false,
-          responseTimeMs,
-          status: response.status,
-          error: `Rail Data ${isArrivalTest ? 'Arrival' : 'Departure'} API returned HTTP ${response.status}: ${faultMsg}`
-        });
-      }
-
-      const trainServices = Array.isArray(parsed?.trainServices) ? parsed.trainServices : [];
-      const xrServices = trainServices.filter((s: any) => !s.operatorCode || String(s.operatorCode).trim().toUpperCase() === 'XR');
-      const sampleServices = xrServices.slice(0, 5).map((s: any) => {
-        if (isArrivalTest) {
-          const origArr = Array.isArray(s.origin) ? s.origin : (s.origin?.location ? (Array.isArray(s.origin.location) ? s.origin.location : [s.origin.location]) : []);
-          const origName = formatLocationName(origArr[0]);
-          const sta = s.sta ? String(s.sta).substring(11, 16) : '--:--';
-          return `${s.trainid || s.uid || 'N/A'} (${sta} from ${origName})`;
-        }
-        const destArr = Array.isArray(s.destination) ? s.destination : (s.destination?.location ? (Array.isArray(s.destination.location) ? s.destination.location : [s.destination.location]) : []);
-        const destName = formatLocationName(destArr[0]);
-        const std = s.std ? String(s.std).substring(11, 16) : (s.sta ? String(s.sta).substring(11, 16) : '--:--');
-        return `${s.trainid || s.uid || 'N/A'} (${std} → ${destName})`;
-      });
 
       if (saveOnSuccess) {
         const stmt = db.prepare(`
           INSERT INTO app_settings (key, value) VALUES (?, ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value
         `);
-        if (isArrivalTest) {
-          stmt.run('nre_arrival_api_url', targetUrl);
-          stmt.run('nre_arrival_api_key', targetApiKey);
-        } else {
-          stmt.run('nre_api_url', targetUrl);
-          stmt.run('nre_api_key', targetApiKey);
+        stmt.run('nr_live_api_url', targetUrl);
+        if (targetApiKey) {
+          stmt.run('nr_live_api_key', targetApiKey);
         }
-        stationCache.clear();
+        nrLiveApi.clearCache();
       }
 
       res.json({
-        success: true,
-        responseTimeMs,
-        status: response.status,
-        locationName: parsed?.locationName || 'London Paddington (PAD)',
-        serviceCount: xrServices.length,
-        sampleServices
+        ...result,
+        feedStatus: nrLiveApi.getStatus(),
       });
     } catch (e: any) {
-      res.status(500).json({ success: false, error: e.message || 'Failed to connect to Rail Data API' });
+      res.status(500).json({ success: false, error: e?.message || 'Failed to test Remote Live Train API' });
     }
   });
 
-  // Rate Limiting
-  const MAX_REQUESTS_PER_HOUR = 4500;
-  const ONE_HOUR_MS = 60 * 60 * 1000;
+  // Remote Live Train API Status (real Admin or Moderator)
+  app.get('/api/nr/status', authenticateToken, requireAdminOrModerator, (_req: any, res) => {
+    res.json(nrLiveApi.getStatus());
+  });
 
-  function checkRateLimit(req: any) {
-    const now = Date.now();
-    const oneHourAgo = now - ONE_HOUR_MS;
-    const stmt = getDb(req).prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
-    const { count } = stmt.get(oneHourAgo) as { count: number };
-    if (count >= MAX_REQUESTS_PER_HOUR) {
-      const rateLimitErr: any = new Error('Global API rate limit exceeded (4500 requests per hour).');
-      rateLimitErr.userMessage = 'Unable to load live train services right now. Please contact an admin.';
-      rateLimitErr.adminDetail = 'Global API rate limit exceeded (4500 requests per hour). Please try again later.';
-      throw rateLimitErr;
+  // Clear Remote Live Train Schedule Cache (real Admin or Moderator)
+  app.post('/api/nr/cache/clear', authenticateToken, requireAdminOrModerator, (_req: any, res) => {
+    nrLiveApi.clearCache();
+    res.json({ success: true, message: 'Live schedule cache cleared.', status: nrLiveApi.getStatus() });
+  });
+
+  // Remote Live Train API: Search Services via configured URL + x-api-key
+  app.get('/api/nr/departures', authenticateToken, async (req: any, res) => {
+    const origin = String(req.query.origin || req.query.crs || '').trim().toUpperCase();
+    const destination = String(req.query.destination || req.query.filterCrs || '').trim().toUpperCase();
+    const rawDate = String(req.query.date || '').trim();
+    const rawTime = String(req.query.time || '').trim();
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || '10'), 10) || 10, 1), 10);
+
+    if (!origin) {
+      return res.status(400).json({ error: 'Origin station or TIPLOC is required' });
     }
-  }
 
-  function recordApiRequest(req: any, userId: string) {
-    const stmt = getDb(req).prepare('INSERT INTO api_requests (id, timestamp, userId) VALUES (?, ?, ?)');
-    stmt.run(uuidv4(), Date.now(), userId);
-  }
-
-  function getRateLimitStats(req: any) {
-    const now = Date.now();
-    const oneHourAgo = now - ONE_HOUR_MS;
-    const stmt = getDb(req).prepare('SELECT COUNT(*) as count FROM api_requests WHERE timestamp > ?');
-    const { count } = stmt.get(oneHourAgo) as { count: number };
-    return {
-      used: count,
-      limit: MAX_REQUESTS_PER_HOUR
-    };
-  }
-
-const CRS_TO_TIPLOC: Record<string, string> = {
-  'ABW': 'ABWDXR', 'WWC': 'WOLWXR', 'CUS': 'CUSTMHS', 'CWX': 'CANWHRF',
-  'ZLW': 'WCHAPXR', 'SRA': 'STFD', 'MYL': 'MRYLAND', 'FOG': 'FRSTGT',
-  'MNP': 'MANRPK', 'IFD': 'ILFORD', 'SVK': 'SVNKNGS', 'GMY': 'GODMAYS',
-  'CTH': 'CHDWLHT', 'RMF': 'ROMFORD', 'GDP': 'GIDEAPK', 'HRO': 'HRLDWOD',
-  'BRE': 'BRTWOOD', 'SNF': 'SHENFLD', 'LST': 'LIVSTLL', 'ZFD': 'FRNDXR',
-  'TCR': 'TOTCTRD', 'BDS': 'BONDST', 'PAD': 'PADTLL', 'AML': 'ACTONML',
-  'EAL': 'EALINGB', 'WEA': 'WEALING', 'HAN': 'HANWELL', 'STL': 'STHALL',
-  'HAY': 'HAYESAH', 'HXX': 'HTRWAPT', 'HAF': 'HTRWTM4', 'HWV': 'HTRWTM5',
-  'WDT': 'WDRYTON', 'IVR': 'IVER', 'LNY': 'LANGLEY', 'SLO': 'SLOUGH',
-  'BNM': 'BNHAM', 'TAP': 'TAPLOW', 'MAI': 'MDNHEAD', 'TWY': 'TWYFORD',
-  'RDG': 'RDNGSTN',
-};
-
-const TIPLOC_TO_NAME: Record<string, string> = {
-  // Operational Depots, Sidings & Turnbacks
-  'MDNHDRS': 'Maidenhead Turnback',
-  'OLDOENG': 'Old Oak Engine Sdg',
-  'ROYAOSD': 'Royal Oak Sidings',
-  'OLDOXRS': 'Old Oak Depot',
-  'OLDOXAR': 'Old Oak Common East',
-  'MDNHDCS': 'Maidenhead CS',
-  'GIDEPKS': 'Gidea Park CS',
-  'GIDEPKM': 'Gidea Park Mid Sidings',
-  'SHENFMS': 'Shenfield CS',
-  'ILFEMUD': 'Ilford E.M.U.D.',
-  'WBRNPKS': 'Westbourne Park Sidings',
-  'PLMSRS': 'Plumstead Sidings',
-  // Elizabeth Line Stations
-  'ABWDXR': 'Abbey Wood',
-  'WOLWXR': 'Woolwich',
-  'CUSTMHS': 'Custom House',
-  'CANWHRF': 'Canary Wharf',
-  'WCHAPXR': 'Whitechapel',
-  'STFD': 'Stratford (London)',
-  'MRYLAND': 'Maryland',
-  'FRSTGT': 'Forest Gate',
-  'MANRPK': 'Manor Park',
-  'ILFORD': 'Ilford',
-  'SVNKNGS': 'Seven Kings',
-  'GODMAYS': 'Goodmayes',
-  'CHDWLHT': 'Chadwell Heath',
-  'ROMFORD': 'Romford',
-  'GIDEAPK': 'Gidea Park',
-  'HRLDWOD': 'Harold Wood',
-  'BRTWOOD': 'Brentwood',
-  'SHENFLD': 'Shenfield',
-  'LIVSTLL': 'Liverpool Street',
-  'LIVST': 'London Liverpool Street',
-  'FRNDXR': 'Farringdon',
-  'TOTCTRD': 'Tottenham Court Road',
-  'BONDST': 'Bond Street',
-  'PADTLL': 'Paddington LL',
-  'PADTON': 'London Paddington',
-  'ACTONML': 'Acton Main Line',
-  'EALINGB': 'Ealing Broadway',
-  'WEALING': 'West Ealing',
-  'HANWELL': 'Hanwell',
-  'STHALL': 'Southall',
-  'HAYESAH': 'Hayes & Harlington',
-  'HTRWAPT': 'Heathrow Central',
-  'HTRWTM4': 'Heathrow Terminal 4',
-  'HTRWTM5': 'Heathrow Terminal 5',
-  'WDRYTON': 'West Drayton',
-  'IVER': 'Iver',
-  'LANGLEY': 'Langley',
-  'SLOUGH': 'Slough',
-  'BNHAM': 'Burnham',
-  'TAPLOW': 'Taplow',
-  'MDNHEAD': 'Maidenhead',
-  'TWYFORD': 'Twyford',
-  'RDNGSTN': 'Reading',
-};
-
-const formatLocationName = (loc: any): string => {
-  if (!loc) return 'Unknown';
-  const tiploc = String(loc.tiploc || '').trim().toUpperCase();
-  const rawName = String(loc.locationName || '').trim();
-  const upperRaw = rawName.toUpperCase();
-  if (tiploc && TIPLOC_TO_NAME[tiploc] && (!rawName || upperRaw === tiploc)) {
-    return TIPLOC_TO_NAME[tiploc];
-  }
-  if (rawName && TIPLOC_TO_NAME[upperRaw]) {
-    return TIPLOC_TO_NAME[upperRaw];
-  }
-  return rawName || tiploc || 'Unknown';
-};
-
-const getTiploc = (code: string) => CRS_TO_TIPLOC[code] || code;
-
-  // Rail Data / NRE API: Get Departures (JSON REST)
-  app.get('/api/nre/departures', authenticateToken, async (req, res) => {
-    const crs = req.query.crs as string;
-    const initialTime = req.query.time as string;
-    const filterCrs = req.query.filterCrs as string;
-
-    if (!crs) {
-      return res.status(400).json({ error: 'CRS code is required' });
+    const londonNowIso = getLondonTimeIso();
+    let searchDate = rawDate || (rawTime.length >= 10 && rawTime.includes('-') ? rawTime.substring(0, 10) : londonNowIso.substring(0, 10));
+    let searchTime = londonNowIso.substring(11, 16);
+    if (rawTime) {
+      if (rawTime.includes('T') && rawTime.length >= 16) {
+        searchDate = rawDate || rawTime.substring(0, 10);
+        searchTime = rawTime.substring(11, 16);
+      } else if (/^\d{2}:\d{2}/.test(rawTime)) {
+        searchTime = rawTime.substring(0, 5);
+      }
     }
-    
-    if ((req as any).user?.isDemo) {
-      const todayStr = initialTime ? initialTime.substring(0, 10) : new Date().toISOString().substring(0, 10);
+
+    if (req.user?.isDemo) {
       return res.json({
         isDemo: true,
+        source: 'demo',
         services: [
-          { std: '07:30', date: todayStr, etd: 'On time', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Shenfield', headcode: '9W36', isPassengerService: true },
-          { std: '07:35', date: todayStr, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Abbey Wood', headcode: '9U38', isPassengerService: true },
-          { std: '07:42', date: todayStr, etd: 'Exp. 07:45', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Gidea Park', headcode: '9W40', isPassengerService: true },
-          { std: '07:48', date: todayStr, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Heathrow Terminal 4', headcode: '9H42', isPassengerService: true },
-          { std: '07:55', date: todayStr, etd: 'On time', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Reading', headcode: '9R44', isPassengerService: true },
-          { std: '08:02', date: todayStr, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Shenfield', headcode: '9W46', isPassengerService: true }
+          { std: '07:30', arrAtDest: '08:25', date: searchDate, etd: 'On time', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Shenfield', headcode: '9W36', isPassengerService: true },
+          { std: '07:35', arrAtDest: '08:06', date: searchDate, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Abbey Wood', headcode: '9U38', isPassengerService: true },
+          { std: '07:42', arrAtDest: '08:30', date: searchDate, etd: 'Exp. 07:45', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Gidea Park', headcode: '9W40', isPassengerService: true },
+          { std: '07:48', arrAtDest: '08:20', date: searchDate, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Heathrow Terminal 4', headcode: '9H42', isPassengerService: true },
+          { std: '07:55', arrAtDest: '08:52', date: searchDate, etd: 'On time', platform: 'A', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Reading', headcode: '9R44', isPassengerService: true },
+          { std: '08:02', arrAtDest: '08:57', date: searchDate, etd: 'On time', platform: 'B', operator: 'Elizabeth Line', operatorCode: 'XR', destination: 'Shenfield', headcode: '9W46', isPassengerService: true }
         ]
       });
     }
 
-    const targetCrsKey = crs.toUpperCase();
-    const cleanFilterCrs = filterCrs ? filterCrs.trim().toUpperCase() : '';
-    const isOriginTiplocOnly = targetCrsKey.length > 3;
-    const isDestinationTiplocOnly = Boolean(cleanFilterCrs && cleanFilterCrs.length > 3);
-    const cacheKey = `${targetCrsKey}_${cleanFilterCrs || 'ALL'}`;
-    
-    let cachedCrsEntry = stationCache.get(cacheKey);
-    
-    if (cachedCrsEntry && (Date.now() - cachedCrsEntry.timestamp > CACHE_TTL_MS)) {
-      cachedCrsEntry = undefined;
-      stationCache.delete(cacheKey);
-    }
+    const isAdminOrMod = req.user?.role === 'admin' || req.user?.role === 'moderator';
+    const feedStatus = nrLiveApi.getStatus();
 
-    const allServicesMap = new Map<string, any>();
-    if (cachedCrsEntry) {
-      cachedCrsEntry.servicesMap.forEach((v, k) => {
-        allServicesMap.set(k, v);
-      });
-    }
-
-    const isAdminOrMod = (req as any).user?.role === 'admin' || (req as any).user?.role === 'moderator';
-    const { url: nreBaseUrl, apiKey, arrivalUrl: nreArrivalUrl, arrivalApiKey } = getNreConfig();
-    if (!apiKey && !(isOriginTiplocOnly && cleanFilterCrs && arrivalApiKey)) {
-      console.error('Rail Data API Key (NRE_STAFF_TOKEN) is not configured on the server.');
+    if (!feedStatus.configured) {
+      console.error('Remote Live Train API URL (NR_LIVE_API_URL) is not configured on the server.');
       const payload: any = {
         error: 'Unable to load live train services right now. Please contact an admin.'
       };
       if (isAdminOrMod) {
         payload.debug = {
-          error: 'Rail Data API Key (NRE_STAFF_TOKEN) is not configured on the server. Configure it in Admin > Rail Data API.'
+          error: 'Remote Live Train API URL is not configured. Configure it in Admin > Live Train API.',
+          feedStatus,
         };
       }
       return res.status(500).json(payload);
     }
 
-    const fetchBoard = async (timeVal: string) => {
-      checkRateLimit(req);
-      recordApiRequest(req, (req as any).user.id);
-      const isoTime = timeVal ? timeVal.substring(0, 19) : getLondonTimeIso();
-      const apiTime = toRailDataTime(isoTime);
-
-      let endpointUrl: URL;
-      let boardType: 'GetArrivalBoardByTIPLOC' | 'GetDepartureBoardByTIPLOC' | 'GetDepartureBoardByCRS';
-      let activeApiKey = apiKey;
-
-      if (isOriginTiplocOnly && cleanFilterCrs && (arrivalApiKey || targetCrsKey !== 'ILFEMUD')) {
-        if (!arrivalApiKey) {
-          const missingArrivalErr: any = new Error(
-            `Rail Data Live Arrival Board API key is not configured for reverse lookup from depot/siding origin "${targetCrsKey}".`
-          );
-          missingArrivalErr.statusCode = 400;
-          missingArrivalErr.userMessage = 'Unable to load live train services right now. Please contact an admin.';
-          missingArrivalErr.adminDetail = `Rail Data Live Arrival Board API key is not configured for reverse lookup from depot/siding origin "${targetCrsKey}". Configure it in Admin > Rail Data API.`;
-          throw missingArrivalErr;
-        }
-        boardType = 'GetArrivalBoardByTIPLOC';
-        activeApiKey = arrivalApiKey;
-        endpointUrl = new URL(`${nreArrivalUrl}/GetArrivalBoardByTIPLOC/${encodeURIComponent(getTiploc(cleanFilterCrs))}/${apiTime}`);
-        endpointUrl.searchParams.set('numRows', '150');
-        endpointUrl.searchParams.set('timeWindow', '120');
-        endpointUrl.searchParams.set('filterTOC', 'XR');
-        endpointUrl.searchParams.set('getNonPassengerServices', 'true');
-      } else if (isOriginTiplocOnly) {
-        boardType = 'GetDepartureBoardByTIPLOC';
-        endpointUrl = new URL(`${nreBaseUrl}/GetDepartureBoardByTIPLOC/${encodeURIComponent(getTiploc(targetCrsKey))}/${apiTime}`);
-        endpointUrl.searchParams.set('numRows', '150');
-        endpointUrl.searchParams.set('timeWindow', '120');
-        endpointUrl.searchParams.set('filterTOC', 'XR');
-        endpointUrl.searchParams.set('getNonPassengerServices', 'true');
-      } else if (isDestinationTiplocOnly) {
-        boardType = 'GetDepartureBoardByTIPLOC';
-        endpointUrl = new URL(`${nreBaseUrl}/GetDepartureBoardByTIPLOC/${encodeURIComponent(getTiploc(targetCrsKey))}/${apiTime}`);
-        endpointUrl.searchParams.set('numRows', '150');
-        endpointUrl.searchParams.set('timeWindow', '120');
-        endpointUrl.searchParams.set('filterTOC', 'XR');
-        endpointUrl.searchParams.set('getNonPassengerServices', 'true');
-      } else {
-        boardType = 'GetDepartureBoardByCRS';
-        endpointUrl = new URL(`${nreBaseUrl}/GetDepartureBoardByCRS/${encodeURIComponent(targetCrsKey)}/${apiTime}`);
-        endpointUrl.searchParams.set('numRows', '150');
-        endpointUrl.searchParams.set('timeWindow', '120');
-        if (cleanFilterCrs) {
-          endpointUrl.searchParams.set('filterCRS', cleanFilterCrs);
-          endpointUrl.searchParams.set('filterType', 'to');
-        }
-        endpointUrl.searchParams.set('filterTOC', 'XR');
-        endpointUrl.searchParams.set('getNonPassengerServices', 'true');
-      }
-
-      const requestUrlStr = endpointUrl.toString();
-      const debugRequestStr = `GET ${requestUrlStr}\nHeaders:\n  x-apikey: ${maskSecret(activeApiKey)}\n  Accept: application/json`;
-
-      const response = await fetch(requestUrlStr, {
-        method: 'GET',
-        headers: {
-          'x-apikey': activeApiKey,
-          'Accept': 'application/json',
-          'cache-control': 'no-cache'
-        }
-      });
-
-      const responseText = await response.text();
-      let jsonObj: any = null;
-      try {
-        jsonObj = responseText ? JSON.parse(responseText) : {};
-      } catch (e) {
-        jsonObj = null;
-      }
-
-      if (!response.ok || !jsonObj) {
-        const faultDetails = jsonObj?.fault?.faultstring || jsonObj?.Message || jsonObj?.message || responseText;
-        console.error('Rail Data API Error response:', faultDetails);
-        const apiErr: any = new Error(
-          isOriginTiplocOnly && response.status >= 500
-            ? `Rail Data API does not provide a board for depot/siding origin "${targetCrsKey}" on this route.`
-            : `Rail Data API responded with status ${response.status}. Details: ${faultDetails}`
-        );
-        apiErr.statusCode = isOriginTiplocOnly && response.status >= 500 ? 400 : 502;
-        apiErr.userMessage = 'Unable to load live train services right now. Please contact an admin.';
-        apiErr.debug = {
-          request: debugRequestStr,
-          response: responseText || String(faultDetails || ''),
-          error: apiErr.message
-        };
-        throw apiErr;
-      }
-
-      const debugResponseStr = JSON.stringify(jsonObj, null, 2);
-      return { jsonObj, requestStr: debugRequestStr, responseStr: debugResponseStr, boardType };
-    };
-
-    const extractLocations = (field: any): any[] => {
-      if (!field) return [];
-      if (Array.isArray(field)) return field;
-      if (field.location) {
-        return Array.isArray(field.location) ? field.location : [field.location];
-      }
-      return [field];
-    };
-
-    const extractCallingPoints = (primary: any, legacy?: any): any[] => {
-      if (Array.isArray(primary)) return primary;
-      if (primary?.location) return Array.isArray(primary.location) ? primary.location : [primary.location];
-      if (Array.isArray(legacy?.callingPointList?.callingPoint)) return legacy.callingPointList.callingPoint;
-      if (legacy?.callingPointList?.callingPoint) return [legacy.callingPointList.callingPoint];
-      return [];
-    };
-
     try {
-      const targetTime = initialTime ? initialTime.substring(0, 19) : getLondonTimeIso();
-
-      let validCachedServices = Array.from(allServicesMap.values()).filter((s: any) => {
-        const sTime = s.std ? String(s.std).substring(0, 19) : (s.sta ? String(s.sta).substring(0, 19) : '');
-        return sTime >= targetTime;
-      });
-      validCachedServices.sort((a: any, b: any) => {
-        const aTime = a.std ? String(a.std).substring(0, 19) : (a.sta ? String(a.sta).substring(0, 19) : '');
-        const bTime = b.std ? String(b.std).substring(0, 19) : (b.sta ? String(b.sta).substring(0, 19) : '');
-        return aTime.localeCompare(bTime);
+      const services = await nrLiveApi.searchServices({
+        origin,
+        destination: destination || undefined,
+        date: searchDate,
+        time: searchTime,
+        limit,
       });
 
-      const cacheCoversStart = Boolean(cachedCrsEntry && cachedCrsEntry.requestedStartTime <= targetTime);
-      let fetchLoopsNeeded = (cacheCoversStart && validCachedServices.length >= 15) ? 0 : 1;
-      let currentTime = targetTime;
-
-      let lastRequest = cachedCrsEntry && cacheCoversStart ? cachedCrsEntry.lastRequest : '';
-      let lastResponse = cachedCrsEntry && cacheCoversStart ? cachedCrsEntry.lastResponse : '';
-      let usedBoardType: string = cachedCrsEntry && cacheCoversStart ? (cachedCrsEntry.boardType || '') : '';
-
-      for (let i = 0; i < fetchLoopsNeeded; i++) {
-        const { jsonObj, requestStr, responseStr, boardType } = await fetchBoard(currentTime);
-        usedBoardType = boardType;
-        lastRequest += (lastRequest ? '\n\n=== NEXT REQUEST ===\n\n' : '') + requestStr;
-        lastResponse += (lastResponse ? '\n\n=== NEXT RESPONSE ===\n\n' : '') + responseStr;
-        
-        const services = jsonObj?.trainServices;
-        if (!services) break;
-        
-        const servicesArray = Array.isArray(services) ? services : [services];
-        if (servicesArray.length === 0) break;
-
-        for (const s of servicesArray) {
-          const opCode = String(s.operatorCode || '').trim().toUpperCase();
-          const opName = String(s.operator || '').toLowerCase();
-          // Strictly filter so only Elizabeth Line (TOC code XR) services are kept
-          if (opCode && opCode !== 'XR') {
-            continue;
-          }
-          if (!opCode && opName && !opName.includes('elizabeth')) {
-            continue;
-          }
-
-          const uniqueKey = `${s.rid || s.rsid || s.uid || s.trainid}_${s.std || s.sta}`;
-          if (!allServicesMap.has(uniqueKey)) {
-            allServicesMap.set(uniqueKey, s);
-          }
-        }
-        
-        const lastService = servicesArray[servicesArray.length - 1];
-        if (lastService) {
-          const timeStr = lastService.std || lastService.sta;
-          if (timeStr) {
-            currentTime = String(timeStr).substring(0, 19);
-          }
-        }
-      }
-
-      const earliestStart = cachedCrsEntry && cachedCrsEntry.requestedStartTime < targetTime
-        ? cachedCrsEntry.requestedStartTime
-        : targetTime;
-
-      stationCache.set(cacheKey, {
-        timestamp: Date.now(),
-        requestedStartTime: earliestStart,
-        servicesMap: allServicesMap,
-        lastRequest,
-        lastResponse,
-        boardType: usedBoardType
-      });
-
-      let servicesArray = Array.from(allServicesMap.values()).filter((s: any) => {
-        const opCode = String(s.operatorCode || '').trim().toUpperCase();
-        const opName = String(s.operator || '').toLowerCase();
-        if (opCode && opCode !== 'XR') return false;
-        if (!opCode && opName && !opName.includes('elizabeth')) return false;
-
-        const sTime = s.std ? String(s.std).substring(0, 19) : (s.sta ? String(s.sta).substring(0, 19) : '');
-        return sTime >= targetTime;
-      });
-      
-      servicesArray.sort((a: any, b: any) => {
-        const aTime = a.std ? String(a.std).substring(0, 19) : (a.sta ? String(a.sta).substring(0, 19) : '');
-        const bTime = b.std ? String(b.std).substring(0, 19) : (b.sta ? String(b.sta).substring(0, 19) : '');
-        return aTime.localeCompare(bTime);
-      });
-      
-      const isArrivalBoard = usedBoardType === 'GetArrivalBoardByTIPLOC';
-      if (isArrivalBoard) {
-        const originTarget = targetCrsKey.toUpperCase();
-        const originTiploc = getTiploc(originTarget);
-        servicesArray = servicesArray.filter((s: any) => {
-          const origLocs = extractLocations(s.origin);
-          if (origLocs.some((l: any) => l.crs === originTarget || l.tiploc === originTarget || l.tiploc === originTiploc)) {
-            return true;
-          }
-          const prevLocs = extractCallingPoints(s.previousLocations, s.previousCallingPoints);
-          return prevLocs.some((l: any) => l.crs === originTarget || l.tiploc === originTarget || l.tiploc === originTiploc);
-        });
-      } else if (cleanFilterCrs) {
-        // GetDepartureBoardByCRS already filters via Darwin's filterCRS + filterType=to
-        // (and omits subsequentLocations), whereas GetDepartureBoardByTIPLOC ignores filterTiploc.
-        const filteredServerSideByCrs = usedBoardType === 'GetDepartureBoardByCRS' && !isDestinationTiplocOnly;
-        if (!filteredServerSideByCrs) {
-          const destTarget = cleanFilterCrs;
-          const destTiploc = getTiploc(destTarget);
-          servicesArray = servicesArray.filter((s: any) => {
-            const destLocs = extractLocations(s.destination);
-            if (destLocs.some((l: any) => l.crs === destTarget || l.tiploc === destTarget || l.tiploc === destTiploc)) {
-              return true;
-            }
-            const locsArray = extractCallingPoints(s.subsequentLocations, s.subsequentCallingPoints);
-            return locsArray.some((l: any) => l.crs === destTarget || l.tiploc === destTarget || l.tiploc === destTiploc);
-          });
-        }
-      }
-
-      // Limit to 10 services
-      servicesArray = servicesArray.slice(0, 10);
-
-      const parsedServices = servicesArray.map((s: any) => {
-        const destLocs = extractLocations(s.destination);
-        const destination = formatLocationName(destLocs[0]);
-        const destinationTiploc = destLocs[0]?.tiploc ? String(destLocs[0].tiploc) : '';
-
-        const scheduledIso = s.std ? String(s.std).substring(0, 16) : (s.sta ? String(s.sta).substring(0, 16) : '');
-        const stdTime = scheduledIso ? scheduledIso.substring(11, 16) : '';
-        
-        let status = '';
-        if (s.isCancelled === true || s.isCancelled === 'true' || s.filterLocationCancelled === true || s.cancelReason) {
-          status = 'Cancelled';
-        } else if (s.departureType === 'Delayed' || s.arrivalType === 'Delayed') {
-          status = 'Delayed';
-        } else {
-          const actualTime = s.atd || (!s.std && s.ata ? s.ata : null);
-          const estTime = s.etd || (!s.std && s.eta ? s.eta : null);
-          const actualOrEst = actualTime || estTime;
-          if (actualOrEst) {
-            const actualOrEstIso = String(actualOrEst).substring(0, 16);
-            const timeVal = actualOrEstIso.substring(11, 16);
-            if (scheduledIso && actualOrEstIso <= scheduledIso) {
-              status = 'On time';
-            } else if (actualTime) {
-              status = (!s.std && s.ata ? 'Arr. ' : 'Dep. ') + timeVal;
-            } else {
-              status = 'Exp. ' + timeVal;
-            }
-          } else {
-            status = 'On time';
-          }
-        }
-
-        return {
-          std: stdTime,
-          date: s.sdd || (scheduledIso ? scheduledIso.substring(0, 10) : ''),
-          etd: status,
-          platform: s.platform || '-',
-          operator: s.operator || 'Elizabeth Line',
-          operatorCode: s.operatorCode || 'XR',
-          destination,
-          destinationTiploc,
-          headcode: s.trainid || (s.rsid ? s.rsid.substring(0, 4) : 'N/A'),
-          isPassengerService: s.isPassengerService !== false
-        };
-      });
-
-      const allServicesSorted = Array.from(allServicesMap.values()).sort((a: any, b: any) => {
-        const aTime = a.std ? String(a.std).substring(0, 19) : (a.sta ? String(a.sta).substring(0, 19) : '');
-        const bTime = b.std ? String(b.std).substring(0, 19) : (b.sta ? String(b.sta).substring(0, 19) : '');
-        return aTime.localeCompare(bTime);
-      });
-
-      const responseData: any = { 
-        boardMode: isArrivalBoard ? 'arrival' : 'departure',
-        services: parsedServices
+      const responseData: any = {
+        source: 'remote-nr-live-api',
+        services,
       };
 
       if (isAdminOrMod) {
-        responseData.debug = { 
-          request: lastRequest, 
-          response: lastResponse,
-          cacheStats: {
-            cachedServicesFound: validCachedServices.length,
-            apiRequestsMade: fetchLoopsNeeded,
-            timeOfLastSearch: cachedCrsEntry ? new Date(cachedCrsEntry.timestamp).toISOString() : new Date().toISOString(),
-            cachedTimeRange: allServicesSorted.length > 0 ? {
-              start: String(allServicesSorted[0].std || allServicesSorted[0].sta || '').substring(11, 16),
-              end: String(allServicesSorted[allServicesSorted.length - 1].std || allServicesSorted[allServicesSorted.length - 1].sta || '').substring(11, 16)
-            } : null,
-            rateLimit: getRateLimitStats(req)
-          }
+        responseData.debug = {
+          query: { origin, destination: destination || null, date: searchDate, time: searchTime, limit },
+          resultCount: services.length,
+          feedStatus: nrLiveApi.getStatus(),
         };
       }
 
       res.json(responseData);
     } catch (error: any) {
-      console.error('Error fetching Rail Data departures:', error);
-      const status = error?.statusCode === 400 ? 400 : 500;
+      console.error('Error querying Remote Live Train API:', error);
       const payload: any = {
-        error: error?.userMessage || 'Unable to load live train services right now. Please contact an admin.'
+        error: 'Unable to load live train services right now. Please contact an admin.'
       };
       if (isAdminOrMod) {
-        payload.debug = error?.debug
-          ? { ...error.debug, cacheStats: { cachedServicesFound: 0, apiRequestsMade: 0, rateLimit: getRateLimitStats(req) } }
-          : { error: error?.adminDetail || error?.message || 'Unknown error', cacheStats: { cachedServicesFound: 0, apiRequestsMade: 0, rateLimit: getRateLimitStats(req) } };
+        payload.debug = {
+          error: error?.message || 'Unknown Remote Live Train API error',
+          feedStatus: nrLiveApi.getStatus(),
+        };
       }
-      res.status(status).json(payload);
+      res.status(502).json(payload);
     }
   });
 
-  // NRE API: Clear Cache
-  app.post('/api/nre/cache/clear', authenticateToken, (req: any, res) => {
-    if (req.user?.isDemo || (req.user.role !== 'admin' && req.user.role !== 'moderator')) {
-      return res.status(403).json({ error: 'Forbidden' });
+  // Remote Live Train API Proxy: Headcode batch live lookup
+  app.get('/api/nr/live', authenticateToken, async (req: any, res) => {
+    if (req.user?.isDemo) {
+      return res.json({ trains: {}, isDemo: true });
     }
-    stationCache.clear();
-    res.json({ message: 'Cache cleared successfully' });
-  });
-
-  // Admin: API Stats
-  app.get('/api/admin/api-stats', authenticateToken, (req: any, res) => {
-    if (req.user?.isDemo || (req.user.role !== 'admin' && req.user.role !== 'moderator')) {
-      return res.status(403).json({ error: 'Forbidden' });
+    const rawHeadcodes = String(req.query.headcodes || '');
+    const headcodes = rawHeadcodes.split(',').map((h) => h.trim().toUpperCase()).filter(Boolean);
+    const dateYmd = req.query.date ? String(req.query.date).trim().substring(0, 10) : undefined;
+    if (headcodes.length === 0) {
+      return res.json({ trains: {} });
     }
-
-    const now = Date.now();
-    const thirtyDaysAgo = now - (30 * 24 * 60 * 60 * 1000);
-    
-    // Get last 30 days data
-    const last30DaysData = getDb(req).prepare(`
-      SELECT timestamp, userId 
-      FROM api_requests 
-      WHERE timestamp > ?
-    `).all(thirtyDaysAgo) as { timestamp: number, userId: string }[];
-
-    // Get user details
-    const users = getDb(req).prepare('SELECT id, name FROM users').all() as { id: string, name: string }[];
-    const userMap = new Map(users.map(u => [u.id, u.name]));
-
-    res.json({
-      requests: last30DaysData,
-      users: Object.fromEntries(userMap),
-      currentRateLimit: getRateLimitStats(req)
-    });
+    try {
+      const result = await nrLiveApi.getLiveByHeadcodes(headcodes, dateYmd);
+      res.json(result);
+    } catch (e: any) {
+      console.error('Error proxying /api/nr/live:', e);
+      res.status(502).json({ error: 'Unable to load live train services right now. Please contact an admin.' });
+    }
   });
 
   // --- Vite / Static Files ---
