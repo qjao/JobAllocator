@@ -30,6 +30,7 @@ RUN npm install --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.ts ./server.ts
 COPY --from=builder /app/emailService.ts ./emailService.ts
+COPY --from=builder /app/nrLiveApiService.ts ./nrLiveApiService.ts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
 # Install tsx globally to run the server
