@@ -539,77 +539,91 @@ export default function FindJobs({ user, onLogout, onNavigate, darkMode, toggleD
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
                     <tr>
-                      <th className="px-4 py-3 font-medium">Departs</th>
-                      <th className="px-4 py-3 font-medium">Destination</th>
-                      <th className="px-4 py-3 font-medium text-center">Platform</th>
-                      <th className="px-4 py-3 font-medium">Headcode</th>
-                      <th className="px-4 py-3 font-medium text-right">Status</th>
+                      <th className="px-3 sm:px-4 py-3 font-medium">Departs</th>
+                      <th className="px-3 sm:px-4 py-3 font-medium">Destination</th>
+                      <th className="hidden sm:table-cell px-4 py-3 font-medium text-center">Platform</th>
+                      <th className="px-3 sm:px-4 py-3 font-medium text-center">Headcode</th>
+                      <th className="hidden sm:table-cell px-4 py-3 font-medium text-right">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                    {services.map((service, index) => (
-                      <tr key={`${service.trainUid || service.headcode}-${service.std}-${index}`} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors group">
-                        <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">
-                          <div>{service.std}</div>
-                          {service.arrAtDest && (
-                            <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
-                              Arr. {service.arrAtDest}
-                            </div>
-                          )}
-                        </td>
-                        <td
-                          className="px-4 py-3 text-slate-700 dark:text-slate-300 truncate max-w-[220px]"
-                          title={
-                            service.destinationTiploc && service.destinationTiploc !== service.destination
-                              ? `${service.destination} (${service.destinationTiploc})`
-                              : service.destination
-                          }
-                        >
-                          {service.destination}
-                        </td>
-                        <td className="px-4 py-3 text-slate-700 dark:text-slate-300 text-center">{service.platform}</td>
-                        <td className="px-4 py-3">
-                          <div className="inline-flex items-center gap-1.5">
-                            <a
-                              href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${service.date}&headcode=${service.headcode}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:text-blue-600 hover:border-blue-400 font-mono text-xs font-semibold px-2 py-1 rounded transition-colors"
-                            >
-                              {service.headcode}
-                            </a>
-                            {service.isPassengerService === false && (
-                              <span
-                                className="px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50"
-                                title="Non-passenger / Empty Coaching Stock movement"
-                              >
-                                ECS
-                              </span>
+                    {services.map((service, index) => {
+                      const statusColorClass =
+                        service.etd === 'On time'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : service.etd === 'Cancelled'
+                            ? 'text-red-600 dark:text-red-400'
+                            : service.etd === 'Scheduled'
+                              ? 'text-slate-500 dark:text-slate-400'
+                              : 'text-amber-600 dark:text-amber-400';
+
+                      return (
+                        <tr key={`${service.trainUid || service.headcode}-${service.std}-${index}`} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors group">
+                          <td className="px-3 sm:px-4 py-3 font-medium text-slate-900 dark:text-slate-100 align-top sm:align-middle">
+                            <div>{service.std}</div>
+                            {service.arrAtDest && (
+                              <div className="text-[11px] font-normal text-slate-500 dark:text-slate-400">
+                                Arr. {service.arrAtDest}
+                              </div>
                             )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <span
-                            className={`font-medium ${
-                              service.etd === 'On time'
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : service.etd === 'Cancelled'
-                                  ? 'text-red-600 dark:text-red-400'
-                                  : service.etd === 'Scheduled'
-                                    ? 'text-slate-500 dark:text-slate-400'
-                                    : 'text-amber-600 dark:text-amber-400'
-                            }`}
-                          >
-                            {service.etd}
-                          </span>
-                          {service.lastLocation && (
-                            <div className="text-[11px] text-slate-400 dark:text-slate-500">
-                              @ {service.lastLocation}
+                            <div className="sm:hidden mt-0.5 text-[11px] leading-tight">
+                              <span className={`font-medium ${statusColorClass}`}>
+                                {service.etd}
+                              </span>
+                              {service.lastLocation && (
+                                <div className="text-[10px] font-normal text-slate-400 dark:text-slate-500 truncate max-w-[110px]">
+                                  @ {service.lastLocation}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td
+                            className="px-3 sm:px-4 py-3 text-slate-700 dark:text-slate-300 max-w-[160px] sm:max-w-[220px] align-top sm:align-middle"
+                            title={
+                              service.destinationTiploc && service.destinationTiploc !== service.destination
+                                ? `${service.destination} (${service.destinationTiploc})`
+                                : service.destination
+                            }
+                          >
+                            <div className="truncate">{service.destination}</div>
+                            <div className="sm:hidden text-[11px] font-normal text-slate-500 dark:text-slate-400 mt-0.5">
+                              Plat. {service.platform || '-'}
+                            </div>
+                          </td>
+                          <td className="hidden sm:table-cell px-4 py-3 text-slate-700 dark:text-slate-300 text-center align-middle">{service.platform}</td>
+                          <td className="px-3 sm:px-4 py-3 text-center align-top sm:align-middle">
+                            <div className="inline-flex flex-col items-center sm:flex-row sm:items-center sm:justify-center gap-1 sm:gap-1.5">
+                              <a
+                                href={`https://tdtools.co.uk/roster/headcode.php?action=headcode-list&date=${service.date}&headcode=${service.headcode}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 hover:text-blue-600 hover:border-blue-400 font-mono text-xs font-semibold px-2 py-1 rounded transition-colors"
+                              >
+                                {service.headcode}
+                              </a>
+                              {service.isPassengerService === false && (
+                                <span
+                                  className="px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800/50"
+                                  title="Non-passenger / Empty Coaching Stock movement"
+                                >
+                                  ECS
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="hidden sm:table-cell px-4 py-3 text-right">
+                            <span className={`font-medium ${statusColorClass}`}>
+                              {service.etd}
+                            </span>
+                            {service.lastLocation && (
+                              <div className="text-[11px] text-slate-400 dark:text-slate-500">
+                                @ {service.lastLocation}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
